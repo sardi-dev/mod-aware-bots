@@ -3,221 +3,103 @@
 [![License: GPL-2.0-or-later](https://img.shields.io/badge/license-GPL--2.0--or--later-blue)](LICENSE)
 [![Core: SkyFire 5.4.8](https://img.shields.io/badge/core-SkyFire%205.4.8%20(18414)-informational)](https://github.com/ProjectSkyfire/SkyFire_548)
 [![Release](https://img.shields.io/github/v/release/sardi-dev/mod-aware-bots?include_prereleases)](https://github.com/sardi-dev/mod-aware-bots/releases)
-[![Unit tests: 1,700+](https://img.shields.io/badge/unit%20tests-1%2C700%2B-brightgreen)](#tests)
+[![Unit tests: 1,700+](https://img.shields.io/badge/unit%20tests-1%2C700%2B-brightgreen)](tests/)
 
 **Player bots for SkyFire 5.4.8 that play like people, not like pets.**
 
-A home server with two or three humans feels empty. This module fills it with a few hundred bots that have their own
-plans: they level and quest, fill your dungeon finder queue and say goodbye after the run, fight battlegrounds with a
-plan for each map, climb a 2v2 arena ladder, duel in town, sell what they really looted on the auction house, and
-remember who was kind to them. You lead them the way you lead players, with raid marks, roles and party chat, instead
-of a page of commands.
+A few hundred bots with their own plans make a small server feel alive: they quest, fill your dungeon finder queue,
+fight battlegrounds with a plan, climb an arena ladder, trade what they earned and remember who was kind to them.
+You lead them like players, with marks, roles and party chat, not a page of commands.
 
-There are two kinds: **random bots** that live in the world on their own, and **alt bots**, your own characters that
-join your group. It ships as a [SkyFire_548](https://github.com/ProjectSkyfire/SkyFire_548) module plus a set of core
-patches, an optional AI sidecar, and a design sheet for every class, role and battleground it plays. In a SkyFire
-tree the module lives in `modules/mod-aware-bots-548`, the name the build and the configuration use.
+| 34 | 47 | 20 | 6 | 1,700+ | ~300 |
+|:--:|:--:|:--:|:--:|:--:|:--:|
+| specialisations | dungeon strategies | raid strategies | battleground playbooks | unit tests | bots in daily use |
 
-> **v0.1.0, the first public release.** Early and honest: what is not proven yet is switched off by default, and every
-> design sheet says what was verified. Built on [mod-playerbots for AzerothCore](https://github.com/mod-playerbots/mod-playerbots)
-> and the Legends of Azeroth 5.4.8 version of it; their authors built the engine this module stands on
-> (see [Credits](#credits-and-license)).
+## What we do better
 
-| 34 | 6 | 2v2 | 1,700+ | ~300 |
-|:--:|:--:|:--:|:--:|:--:|
-| specialisations with rotations | battleground playbooks | bot arena ladder | unit tests | bots in daily use on one server |
+- **They live; you lead.** Bots act on their own plans and follow your marks and roles, no command lists.
+- **Nothing is free.** No autogear or cheats: bots pay for repairs and training and wear what they earned.
+- **A real market.** Auction house goods were really looted or crafted, and bought with earned gold.
+- **Battlegrounds with a plan.** A playbook per map, a leader bot, and call-outs such as `inc bs 3` understood.
+- **Manners and memory.** Bots greet, wait for loot, say goodbye, and remember who was kind to them.
+- **Skill you can feel.** Expert, good and casual bots, playing class sheets written from player guides.
+- **Optional AI orchestrator.** Chat and battleground strategy through OpenRouter, with fallbacks and a budget cap.
+- **Built to be trusted.** 1,700+ unit tests, a scenario harness, risky systems off by default.
 
-- [Why try it](#why-try-it)
-- [What the bots do](#what-the-bots-do)
-- [Status and known limitations](#status-and-known-limitations)
-- [Quick start](#quick-start)
-- [Configuration highlights](#configuration-highlights)
-- [Requirements](#requirements) and [tests](#tests)
-- [Full feature list](docs/FEATURES.md), [comparison](docs/COMPARISON.md), [install guide](docs/INSTALL.md),
-  [roadmap](docs/ROADMAP.md)
+## Everything the bots do
 
-## Why try it
+✅ Ready &nbsp;&nbsp; 🛠️ In development (off by default where marked)
 
-This module would not exist without mod-playerbots, and much of its code is still theirs. It makes different design
-choices, for a small server where a few humans play next to a few hundred bots.
+| Area | ✅ Ready | 🛠️ In development |
+|------|---------|-------------------|
+| World life | Random bots, roaming with purpose, breaks and log-offs, full activity near humans, bot guilds, skill tiers, no cheats or free upkeep, random bot passwords | Travel across continents, city errands, training at trainers, gear upgrades, summons and meeting stones, duel spots, stuck recovery, a higher-level starting batch |
+| Groups and dungeons | Goal-based invites, travel to your group, alt bots, dungeon finder fill, finder manners, dungeon chat, a voice per bot | Leading by marks, loot manners, bot-led dungeon runs, bots forming groups in LFG chat, strategies for 47 dungeons |
+| Classes and roles | Rotations for all 34 specialisations | Class sheets from player guides, talents and glyphs, tank, healer and damage role sheets, smart dispel timing |
+| Raids | | Strategies for 20 raids, every cheat removed |
+| Battlegrounds | | Queue fill, 6 map playbooks, a leader bot, call-outs, a human call-out reader; Silvershard Mines, Deepwind Gorge, Tiger's Peak and Temple of Kotmogu rules in the core patches |
+| Arenas | | Named 2v2 bot teams with a rating ladder, a ladder NPC, ladder news, a JSON snapshot, team play |
+| Duels and PvP | | 1v1 engine, enemy awareness, smart interrupts and defensives, fake casts, burst windows, kill windows, class PvP packages |
+| Economy (off) | | Auction selling and buying, mail, a price table from game data, a gold reserve for upkeep, profession materials kept, trial limits, economy tools |
+| Social life (off) | | Liking score per human, playstyles, shared-quest group offers, emote replies, privacy and wipe, trial limits |
+| AI layer (off) | | Player-to-player chat with human timing, openers, honest "I am a bot" answers, battleground strategy, memory, rule-based fallback, budget cap, privacy filter, admin commands |
+| Quality | Unit tests, sidecar and round-trip tests, scenario harness, performance monitor, tagged logs, core gap list, uninstall SQL | |
 
-- **They live; you lead.** Bots decide from their own state: they answer an invite because of the level gap, a quest
-  nearby or what they just started, and they travel to your group instead of being summoned. In a dungeon they follow
-  your marks and roles. The inherited chat commands for your own alt bots are still there when you want them.
-- **Nothing is free.** No maintenance, autogear or best-in-slot commands, and the food, taxi and raid cheats are
-  removed from the code. Bots pay for repairs, riding and professions, and wear what they looted, bought or crafted.
-- **A market that is real.** Auction house sellers are bots that actually looted, gathered or crafted the goods, at
-  prices from a researched price table, and buyers pay with gold they earned. Nothing is created out of nothing.
-- **Battlegrounds with a plan.** Every supported map has a playbook (goals, positions, roles, call-outs, failure
-  modes) written before the code. A leader bot calls the stance, bots call out what they see, and they read short
-  human call-outs such as `inc bs 3`.
-- **Bots with manners and memory.** Finder bots greet, ask about quests, wait for the loot and say goodbye. With the
-  social life on, each bot keeps a liking score for each human: grouping, finished dungeons, trades and thanks raise
-  it, rudeness and ninja looting lower it, and it shapes their group offers.
-- **Skill you can feel.** Every random bot has a fixed tier (expert, good, casual) that sets how much of its class
-  sheet it plays and how fast it reacts. The class sheets come from player guides, checked against the 5.4.8 spell
-  data.
-- **An AI voice, if you want one.** An optional sidecar asks a language model through OpenRouter for chat lines in
-  player-to-player moments and for the battleground leader's strategy, with a rule-based fallback for every call and a
-  monthly budget cap.
-- **Measured, not guessed.** More than 1,700 unit tests of the decision logic, about 100 tests of the sidecar, and an
-  in-game scenario harness for game masters (`.botscenario`, `.botprobe`).
-- **Private and plug and play.** The economy, the social life and the AI layer are off until you turn them on; the
-  liking table keeps no character names, and random bot accounts get random passwords. Install is a module folder, a
-  set of core patches and SQL that the core's updater applies.
+Details for every feature: [docs/FEATURES.md](docs/FEATURES.md). How we compare with mod-playerbots:
+[docs/COMPARISON.md](docs/COMPARISON.md).
 
-The careful version, with the trade-offs, is in [docs/COMPARISON.md](docs/COMPARISON.md).
+## Roadmap
 
-## What the bots do
+```mermaid
+flowchart LR
+    A["0.1.0<br/>Released<br/>Living world bots"]:::done --> B["0.1.x<br/>Easy install<br/>anywhere"]:::now
+    B --> C["0.2<br/>Battlegrounds and<br/>duels proven live"]:::now
+    C --> D["0.3<br/>Economy and social<br/>life on by default"]:::now
+    D --> E["0.4<br/>Arenas<br/>for humans"]:::next
+    E --> F["0.5<br/>Raids<br/>live"]:::next
+    F --> G["0.6<br/>500+ bots"]:::next
+    G --> H["1.0<br/>Stable"]:::goal
+    classDef done fill:#2e7d32,stroke:#1b5e20,color:#ffffff
+    classDef now fill:#f9a825,stroke:#f57f17,color:#000000
+    classDef next fill:#546e7a,stroke:#37474f,color:#ffffff
+    classDef goal fill:#1565c0,stroke:#0d47a1,color:#ffffff
+```
 
-| Area | What you see | State |
-|------|--------------|-------|
-| World and leveling | Random bots quest, grind, gather, travel by road, boat and flight path, visit trainers and vendors, take breaks at inns, and log off for a while like players | in daily use |
-| Groups | They answer group invites from their own situation (level gap, a quest nearby, what they just started), travel to your group instead of being summoned, and follow your marks | in daily use |
-| Dungeons | The dungeon finder fills the roles missing in a human's queue with fitting bots; finder bots greet, ask about quests, wait for the loot and say goodbye; bot-only parties run dungeons on their own now and then | in daily use, bot-led runs beta |
-| Classes and roles | Rotations for all 34 specialisations; class sheets written from player guides and checked against the 5.4.8 spell data drive 28 of them (six sheets are drafts). Tanks pull marks, healers keep shields and heal-over-time effects up within mana guardrails | beta |
-| Skill tiers | Every random bot has a fixed tier (expert, good, casual) that sets how much of its class sheet it plays and how fast it reacts | in daily use |
-| Battlegrounds | Per-map playbooks for Warsong Gulch, Twin Peaks, Arathi Basin, Battle for Gilneas, Eye of the Storm and Silvershard Mines: a leader bot calls the stance, bots call out what they see, and they read short human call-outs such as `inc bs 3` as information | beta |
-| Arenas | A ladder of named 2v2 bot teams with their own rating, scheduled bot-versus-bot matches, a ladder NPC and ladder news in chat | beta (pilot) |
-| Duels and 1v1 | Duel spots in towns; a 1v1 engine where ranged bots kite and melee bots chase, by skill tier | beta |
-| PvP rules | What a bot saw the enemy use (trinkets, defensives, interrupts), interrupts late in the cast, defensives early, fake casts by experts, a shared kill window and crowd control chain | beta |
-| Economy | Random bots list what they looted, gathered or crafted and buy what they need on their faction's auction house, at prices from a researched price table, while keeping gold back for repairs, training, riding and a mount | off by default, beta |
-| Social life | A liking score per bot and human (grouping, finished dungeons, trades and thanks raise it, rudeness and ninja looting lower it), lasting playstyles, shared-quest group offers and answers to your emotes | off by default, beta |
-| AI layer | An optional sidecar asks a language model through OpenRouter for chat lines in player-to-player moments and for the battleground leader's strategy; every call has a rule-based fallback and a monthly budget cap | off by default, beta |
+| Stage | What it brings | Status |
+|-------|----------------|--------|
+| 0.1.x | CI build on upstream SkyFire, a living world config profile, config cleanup, contributing guide | 🟡 In progress |
+| 0.2 | Every battleground playbook proven live, Temple of Kotmogu and Deepwind Gorge playbooks, 1v1 round two, PvP packages for every spec | 🟡 In progress |
+| 0.3 | Economy and social life on by default, trade chat that names real goods and recipes, bank errands, recipe buying | 🟡 In progress |
+| 0.4 | Humans queue against ladder teams, 3v3 and 5v5, crowd control chains, peel and map hazards | ⚪ Planned |
+| 0.5 | Raid runs with bot groups led by a human, tank swaps and healer assignments | ⚪ Planned |
+| 0.6 | 500 bots and more, with activity scaling and measured limits | ⚪ Planned |
+| 1.0 | Stable configuration, checked on more than one server, core hooks upstream | 🔵 Goal |
 
-Every row is detailed, with the document or configuration key behind it, in [docs/FEATURES.md](docs/FEATURES.md).
-
-## Status and known limitations
-
-The module ran for several weeks on a private SkyFire 5.4.8 server with about 300 random bots that level, quest,
-group and run dungeons. Not everything is proven, and this is an early release:
-
-- **The patch set.** The module builds on upstream `main` at the base commit in [patches/README.md](patches/README.md)
-  plus the 25 patches (compile-checked on 2026-11-23). It ran day to day on a SkyFire tree with more changes, so a
-  bare `main` server has not had the same weeks of live play yet.
-- **Raids**: the raid strategies (20 raids) have not been run live.
-- **Battlegrounds**: each playbook's first line states how far it got. Several are unit tested with live checks still
-  pending. Rated battlegrounds and the Tol Barad battlefield are not available on SkyFire.
-- **Arenas**: 2v2 only, bot teams against bot teams. Human queues against ladder teams, 3v3 and 5v5 come later.
-- **Economy and social life**: off by default and still in soak testing. The auction house uses buyouts only (bots
-  never bid).
-- **AI sidecar**: it has no authentication, so it must stay on a private network next to the world server. Live use
-  costs money at your provider (a monthly cap applies).
-- **Shipped defaults**: `conf/playerbots.conf.dist` keeps several defaults of the base module (random start levels,
-  periodic re-randomizing, teleports for level, 500 random bots). The largest population tested is about 300. Use the
-  [living world profile](docs/INSTALL.md#5-the-living-world-profile).
-- **Platform**: built and run on Linux only. Windows is untested.
-- **Core gaps**: the places where SkyFire lacks something the module uses are listed in [docs/stubs.md](docs/stubs.md).
-- The headless test client used for live measurement is not part of this release.
+The AI layer grows along the way, with duel decisions next. Full plan: [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Quick start
 
-The full guide, with database and sidecar steps, is [docs/INSTALL.md](docs/INSTALL.md).
-
 ```sh
-# 1. SkyFire at the base commit named in patches/README.md, plus the core patches
-git clone https://github.com/ProjectSkyfire/SkyFire_548.git
-cd SkyFire_548
-git checkout -b bots f61bd333aa
-git am --keep-cr /path/to/mod-aware-bots-548/patches/*.patch
-
-# 2. The module, in a folder of exactly this name
+git clone https://github.com/ProjectSkyfire/SkyFire_548.git && cd SkyFire_548
+git checkout -b bots f61bd333aa                     # the base commit in patches/README.md
 git clone https://github.com/sardi-dev/mod-aware-bots.git modules/mod-aware-bots-548
-
-# 3. Build with the module switched on
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=/opt/skyfire -DAWARE_BOTS=ON
-cmake --build build && cmake --install build
+git am --keep-cr modules/mod-aware-bots-548/patches/*.patch
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DAWARE_BOTS=ON && cmake --build build
 ```
 
-Then create the `playerbots` database and load `sql/playerbots/`, copy `playerbots.conf.dist` to `playerbots.conf`
-next to `worldserver.conf`, set `PlayerbotsDatabaseInfo`, and start the world server. The module's SQL for the auth,
-characters and world databases is applied by the core's updater on start (`Updates.Modules`, from patch 0013).
+Then load `sql/playerbots/` into a `playerbots` database and copy `conf/playerbots.conf.dist` next to
+`worldserver.conf`. The full guide is [docs/INSTALL.md](docs/INSTALL.md).
 
-## Configuration highlights
+**Good to know:** start with 100 to 300 bots and the [living world profile](docs/INSTALL.md#5-the-living-world-profile);
+keep the AI sidecar on a private network (it has no authentication); built and run on Linux.
 
-All settings are in [conf/playerbots.conf.dist](conf/playerbots.conf.dist), each with a comment. SkyFire does not
-reload this file: edits need a restart.
+## Be an early tester
 
-| Key | Default | What it does |
-|-----|---------|--------------|
-| `AiPlayerbot.Enabled` | 1 | Turns the whole module off without a rebuild |
-| `AiPlayerbot.MinRandomBots`, `MaxRandomBots` | 500 | Random bots online; start lower (100 to 300) and grow |
-| `AiPlayerbot.RandomBotRandomPassword` | 1 | Random passwords for bot accounts. With 0 the password is the account name: never on a reachable server |
-| `AiPlayerbot.SkillTiers.ExpertPercent`, `GoodPercent` | 10, 60 | The share of expert and good bots; the rest are casual |
-| `AiPlayerbot.LfgFill.Enable` | 1 | Fill a human's dungeon finder queue with fitting bots |
-| `AiPlayerbot.LfgBotRuns.Enable` | 1 | Bot-only dungeon runs now and then |
-| `AiPlayerbot.Pvp.Leader.Enable` | 1 | One leader bot per battleground side calls the stance |
-| `AiPlayerbot.ArenaTeams.Enable` | 1 | The bot arena ladder |
-| `AiPlayerbot.OneVsOne.Enable` | 1 | The 1v1 engine for duels and lone fights |
-| `AiPlayerbot.Auction.Enable` | 0 | The bots' auction house (`Auction.OnlyBots` limits it to named bots for a trial) |
-| `AiPlayerbot.Social.Liking.Enable`, `Social.Playstyle.Enable` | 0 | The social life; while off nothing is read or written |
-| `AwareAi.Enable`, `AwareAi.Chat.Enable` | 0 | The AI layer and its chat; while off the module never contacts the sidecar |
-| `AwareAi.Chat.DenyBeingBot` | 0 | When on, the chat prompt tells the bots to stay in character as players; off, a bot asked directly may say it is a bot |
+Every 🛠️ feature above gets better with reports from real servers. Install it, let a few hundred bots loose, and tell us
+what they did: open an issue with the module's log lines, or a pull request (run `tests/run.sh` first). Your server
+shapes 0.2.
 
-**Privacy of the social life.** With liking on, the module creates `playerbots_social_liking` and
-`playerbots_social_offer` in the playerbots database itself (the files in `sql/playerbots/updates/` are for fresh
-installs), keeps no character names in them, and a game master can delete a character's rows with
-`.playerbots social wipe <character name>|all` (with the AI layer on, the sidecar forgets that player too). See
-[docs/social/social.md](docs/social/social.md).
+## Credits
 
-## Requirements
-
-- SkyFire_548 at upstream `main`, at the base commit named in [patches/README.md](patches/README.md), with the patches
-  in `patches/` applied (mostly hooks and read-only getters, plus auction and mail helpers and three maps the core
-  lacked).
-- SkyFire's own build requirements (its README: a C++23 compiler, GCC 14 or newer on Linux, CMake, Boost, OpenSSL,
-  the MySQL client libraries). The module needs nothing beyond them.
-- A MySQL server with SkyFire's `auth`, `characters` and `world` databases and one more, `playerbots`.
-- Optional, for the AI layer: Docker (or Python 3.12) for the sidecar, and an OpenRouter key in the environment.
-
-## Tests
-
-```sh
-tests/run.sh                                         # the module's unit tests: only g++ with C++20 needed
-cd services/aware-ai && pytest && ruff check . && mypy   # the sidecar, with its dev dependencies installed
-```
-
-The unit tests cover the module's pure decision logic (policies for battlegrounds, arenas, duels, pricing, the
-reserve fund, liking, playstyles, chat pacing and more) with no game core and no test framework. The sidecar tests
-mock OpenRouter and use no network. Run `tests/run.sh` before every build.
-
-## Repository layout
-
-| Folder | Content |
-|--------|---------|
-| `src/` | The module: bot sessions and managers, the AI engine, strategies, actions, triggers and values, class rotations; `src/Arena/` (the ladder), `src/PvP/`, `src/AwareAi/` (the sidecar client), `src/Scenario/` (the test harness) |
-| `conf/` | The example configuration |
-| `sql/` | The `playerbots` database schema and data |
-| `data/sql/` | The module's SQL for the core databases, applied by the core's updater, and its uninstall files |
-| `patches/` | The core patches against SkyFire_548 (see its README) |
-| `services/aware-ai/` | The optional AI sidecar (Python, see its README) |
-| `tests/` | Unit tests of the pure logic (`tests/run.sh`) |
-| `tools/` | Scripts used during the port and the economy audit tools |
-| `docs/` | Class, role and battleground sheets, PvP, duels, arena, raids, economy and social design, porting notes |
-
-**Reading the docs.** Ids such as `BT-154` in comments and documents come from the maintainer's private tracker, and
-"the owner" in them means the project's maintainer. Numbered "design decisions" are explained in
-[docs/decisions.md](docs/decisions.md). Each sheet says at the top what was verified, what is inference and what still
-needs a live check.
-
-## Feedback and contributing
-
-This is an early release, and reports from other servers are the most useful thing right now. Please open an issue with the
-SkyFire commit, the module commit, the configuration lines you changed and the module's log lines around the problem
-(they carry tags such as `[BOTPARTY]`, `[ARENALADDER]` or `[SOCIAL]`). Pull requests are welcome; please run
-`tests/run.sh` first and add a test for new decision logic.
-
-## Credits and license
-
-GPL-2.0-or-later, see [LICENSE](LICENSE), [NOTICE.md](NOTICE.md) (how the licenses fit together) and
-[CREDITS.md](CREDITS.md).
-
-- **mod-playerbots for AzerothCore** and its contributors, including the original playerbots authors: the bot engine,
-  strategies and much of the code here.
-- **[Legends of Azeroth Pandaria 5.4.8](https://github.com/Legends-of-Azeroth/Legends-of-Azeroth-Pandaria-5.4.8)**: this module is based on their 5.4.8 version of mod-playerbots, and several
-  core getters in `patches/` are based on their core.
-- **AzerothCore**, **TrinityCore** and **The Cataclysm Preservation Project**, as listed in `CREDITS.md`.
-- **SkyFire**, the core this module runs on. The core patches follow SkyFire's license (GPL-3.0).
-
-Original copyright notices are kept in every file that came from another project. No game client data is part of
-this repository.
+GPL-2.0-or-later, see [CREDITS.md](CREDITS.md). Built on [mod-playerbots](https://github.com/mod-playerbots/mod-playerbots)
+and its [Legends of Azeroth Pandaria 5.4.8](https://github.com/Legends-of-Azeroth/Legends-of-Azeroth-Pandaria-5.4.8)
+version, whose authors built the engine this module stands on. No game client data is part of this repository.
