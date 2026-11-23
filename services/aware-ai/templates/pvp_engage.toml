@@ -1,0 +1,34 @@
+# Asked when a PvP-flagged enemy player enters twice the bot's aggro range, before any fight starts.
+# Bump `version` whenever the wording or option set changes, so logs and caches tell versions apart.
+name = "pvp_engage"
+version = 1
+feature = "pvp"
+cache_ttl_s = 10
+
+intro = """
+Fantasy MMO (client 5.4.8), PvP realm. A bot player has noticed an enemy-faction player.
+Judge the fight like a skilled, self-preserving player with the bot's personality (0-100 scales).
+Distances are in yards; gear_score compares equipment strength; grudge is how much the bot wants revenge.
+"""
+
+instructions = "Which action gives this bot the best outcome, considering its odds of winning and its personality?"
+
+[[options]]
+name = "attack_now"
+criteria = "Attack the enemy player immediately: the bot is likely to win now, or the target is distracted or weakened."
+
+[[options]]
+name = "wait_for_opening"
+criteria = "Hold position unseen and attack later, when the target is busy with mobs, lower on health, or alone."
+
+[[options]]
+name = "call_help_then_attack"
+criteria = "Ask nearby allies for help first, then attack together: the fight is winnable only with support."
+
+[[options]]
+name = "avoid"
+criteria = "Avoid the enemy and keep doing the current activity: the fight is not worth it or the odds are poor."
+
+[[options]]
+name = "flee"
+criteria = "Run away now: the enemy (or their group) is much stronger and is likely to attack the bot."

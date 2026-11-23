@@ -1,0 +1,834 @@
+From 58b8160f6df58607a0fd09a7c3f184a1f44de807 Mon Sep 17 00:00:00 2001
+From: sardi-dev <134648583+sardi-dev@users.noreply.github.com>
+Date: Wed, 18 Nov 2026 23:30:35 +0000
+Subject: [PATCH 20/25] Rework the Temple of Kotmogu rules
+
+The battleground gave every team the same points on a timer, whether or
+not anyone held an orb, and had no time limit. Now each orb carrier
+scores for its team every 5 seconds, 3 points on the outer field, 4 in
+the middle ring and 5 in the centre, a kill gives 10 points, and the
+match ends at 1600 points or after 25 minutes, when the higher score
+wins and a tie goes to the team that scored last. The orb goes back to
+its pedestal when its carrier dies, leaves or loses the aura, and the
+aura grows stronger every 15 seconds. Dead players now start from the
+graveyards of their own team, and the winners get the kill credit of
+the map.
+
+The carrier spells were paired with the wrong orb colours, so each orb
+now uses the spell its game object names. The achievements of the map
+are left out, their criteria types are not implemented.
+
+Based on Legends of Azeroth 5.4.8.
+---
+ .../2026_11_18_world_temple_of_kotmogu.sql    |  17 +
+ .../Battlegrounds/Zones/BattlegroundVOP.cpp   | 409 ++++++++++--------
+ .../Battlegrounds/Zones/BattlegroundVOP.h     |  70 ++-
+ src/server/game/Miscellaneous/Language.h      |   6 +
+ src/server/game/Scripting/ScriptLoader.cpp    |   2 +
+ .../Battlegrounds/temple_of_kotmogu.cpp       |  65 +++
+ src/server/scripts/Pandaria/CMakeLists.txt    |   1 +
+ 7 files changed, 368 insertions(+), 202 deletions(-)
+ create mode 100644 sql/pending_updates/world/2026_11_18_world_temple_of_kotmogu.sql
+ create mode 100644 src/server/scripts/Pandaria/Battlegrounds/temple_of_kotmogu.cpp
+
+diff --git a/sql/pending_updates/world/2026_11_18_world_temple_of_kotmogu.sql b/sql/pending_updates/world/2026_11_18_world_temple_of_kotmogu.sql
+new file mode 100644
+index 0000000000..2116c618c3
+--- /dev/null
++++ b/sql/pending_updates/world/2026_11_18_world_temple_of_kotmogu.sql
+@@ -0,0 +1,17 @@
++-- Temple of Kotmogu: the carrier scoring, timer and orb rules are in the core. Based on Legends of Azeroth 5.4.8.
++
++-- Strings of the orb pickup messages
++DELETE FROM `skyfire_string` WHERE `entry` BETWEEN 12150 AND 12153;
++INSERT INTO `skyfire_string` (`entry`, `content_default`) VALUES
++(12150, 'The |cFF87CEFABlue|r Orb was picked up by $n!'),
++(12151, 'The |cFF800080Purple|r Orb was picked up by $n!'),
++(12152, 'The |cFF00FF00Green|r Orb was picked up by $n!'),
++(12153, 'The |cFFFFA500Orange|r Orb was picked up by $n!');
++
++-- The carrier aura grows every tick and sends the orb back when it ends
++DELETE FROM `spell_script_names` WHERE `spell_id` IN (121164, 121175, 121176, 121177);
++INSERT INTO `spell_script_names` (`spell_id`, `ScriptName`) VALUES
++(121164, 'spell_kotmogu_orb_of_power'),
++(121175, 'spell_kotmogu_orb_of_power'),
++(121176, 'spell_kotmogu_orb_of_power'),
++(121177, 'spell_kotmogu_orb_of_power');
+diff --git a/src/server/game/Battlegrounds/Zones/BattlegroundVOP.cpp b/src/server/game/Battlegrounds/Zones/BattlegroundVOP.cpp
+index c7187f8416..5fac45b32d 100644
+--- a/src/server/game/Battlegrounds/Zones/BattlegroundVOP.cpp
++++ b/src/server/game/Battlegrounds/Zones/BattlegroundVOP.cpp
+@@ -6,6 +6,7 @@
+ #include "BattlegroundMgr.h"
+ #include "BattlegroundVOP.h"
+ #include "Creature.h"
++#include "DBCStores.h"
+ #include "Language.h"
+ #include "Object.h"
+ #include "ObjectMgr.h"
+@@ -13,6 +14,19 @@
+ #include "World.h"
+ #include "WorldPacket.h"
+ 
++float const BG_VOP_OrbPositions[BG_VOP_MAX_ORBS][4] =
++{
++    { 1716.83f, 1249.93f, 13.5706f, 4.71397f },     // blue
++    { 1850.26f, 1416.77f, 13.5709f, 1.56061f },     // purple
++    { 1716.78f, 1416.64f, 13.5709f, 1.57239f },     // green
++    { 1850.29f, 1250.31f, 13.5708f, 4.70848f }      // orange
++};
++
++int32 const BG_VOP_DroppedStrings[BG_VOP_MAX_ORBS] =
++{
++    LANG_BG_VOP_DROPPED_BLUE, LANG_BG_VOP_DROPPED_PURPLE, LANG_BG_VOP_DROPPED_GREEN, LANG_BG_VOP_DROPPED_ORANGE
++};
++
+ BattlegroundVOP::BattlegroundVOP()
+ {
+     m_BuffChange = true;
+@@ -27,67 +41,49 @@ BattlegroundVOP::BattlegroundVOP()
+ 
+ void BattlegroundVOP::PostUpdateImpl(uint32 diff)
+ {
+-    if (GetStatus() == STATUS_IN_PROGRESS)
++    if (GetStatus() != STATUS_IN_PROGRESS)
++        return;
++
++    m_PlayTime += diff;
++    if (m_PlayTime >= uint32(m_MinutesElapsed + 1) * MINUTE * IN_MILLISECONDS)
++    {
++        ++m_MinutesElapsed;
++        UpdateWorldState(BG_VOP_TIME_REMAINING, BG_VOP_MATCH_MINUTES - m_MinutesElapsed);
++    }
++
++    if (m_MinutesElapsed >= BG_VOP_MATCH_MINUTES)
++    {
++        if (m_TeamScores[TEAM_ALLIANCE] > m_TeamScores[TEAM_HORDE])
++            EndBattleground(ALLIANCE);
++        else if (m_TeamScores[TEAM_HORDE] > m_TeamScores[TEAM_ALLIANCE])
++            EndBattleground(HORDE);
++        else                                                // on a tie the team that scored last wins
++            EndBattleground(m_LastScoreTeam);
++        return;
++    }
++
++    // Every carrier scores for its team each 5 seconds
++    for (uint8 i = 0; i < BG_VOP_MAX_ORBS; ++i)
+     {
+-        int team_points[BG_TEAMS_COUNT] = { 0, 0 };
++        if (!m_OrbKeepers[i])
++            continue;
+ 
+-        // Accumulate points
+-        for (int team = 0; team < BG_TEAMS_COUNT; ++team)
++        m_OrbTimers[i] += diff;
++        if (m_OrbTimers[i] < BG_VOP_CARRIER_TICK)
++            continue;
++
++        m_OrbTimers[i] -= BG_VOP_CARRIER_TICK;
++
++        Player* keeper = ObjectAccessor::FindPlayer(m_OrbKeepers[i]);
++        if (!keeper)
+         {
+-            int points = ++team_points[team];
+-            if (!points)
+-                continue;
+-
+-            m_lastTick[team] += diff;
+-            if (m_lastTick[team] > BG_VOP_TickIntervals[points])
+-            {
+-                m_lastTick[team] -= BG_VOP_TickIntervals[points];
+-                m_TeamScores[team] += BG_VOP_TickPoints[points];
+-                m_HonorScoreTics[team] += BG_VOP_TickPoints[points];
+-
+-                for (BattlegroundPlayerMap::const_iterator itr = GetPlayers().begin(); itr != GetPlayers().end(); ++itr)
+-                {
+-                    if (Player* player = ObjectAccessor::FindPlayer(itr->first))
+-                    {
+-                        if (player->GetTeamId() == team)
+-                        {
+-                            if (player->HasAura(BG_VOP_SPELL_ORB_PICKED_UP_1) ||
+-                                player->HasAura(BG_VOP_SPELL_ORB_PICKED_UP_2) ||
+-                                player->HasAura(BG_VOP_SPELL_ORB_PICKED_UP_3) ||
+-                                player->HasAura(BG_VOP_SPELL_ORB_PICKED_UP_4))
+-                            {
+-                                m_TeamScores[team] += BG_VOP_TickPoints[points];
+-                                UpdatePlayerScore(player, SCORE_ORB_SCORE, BG_VOP_TickPoints[points]);
+-                            }
+-                        }
+-                    }
+-                }
+-
+-                if (m_HonorScoreTics[team] >= m_HonorTics)
+-                {
+-                    RewardHonorToTeam(GetBonusHonorFromKill(1), (team == TEAM_ALLIANCE) ? ALLIANCE : HORDE);
+-                    m_HonorScoreTics[team] -= m_HonorTics;
+-                }
+-
+-                if (m_TeamScores[team] > BG_VOP_MAX_TEAM_SCORE)
+-                    m_TeamScores[team] = BG_VOP_MAX_TEAM_SCORE;
+-
+-                if (team == TEAM_ALLIANCE)
+-                    UpdateWorldState(BG_VOP_OP_RESOURCES_A, m_TeamScores[team]);
+-                else if (team == TEAM_HORDE)
+-                    UpdateWorldState(BG_VOP_OP_RESOURCES_H, m_TeamScores[team]);
+-
+-                uint8 otherTeam = (team + 1) % BG_TEAMS_COUNT;
+-                if (m_TeamScores[team] > m_TeamScores[otherTeam] + 500)
+-                    m_TeamScores500Disadvantage[otherTeam] = true;
+-            }
++            DropOrb(i, NULL);
++            continue;
+         }
+ 
+-        // Test win condition
+-        if (m_TeamScores[TEAM_ALLIANCE] >= BG_VOP_MAX_TEAM_SCORE)
+-            EndBattleground(ALLIANCE);
+-        else if (m_TeamScores[TEAM_HORDE] >= BG_VOP_MAX_TEAM_SCORE)
+-            EndBattleground(HORDE);
++        uint32 points = GetCarrierPoints(keeper);
++        keeper->CastSpell(keeper, BG_VOP_SPELL_3_VICTORY_POINTS + points - 3, true);
++        AddScore(keeper, points);
+     }
+ }
+ 
+@@ -98,6 +94,9 @@ void BattlegroundVOP::StartingEventCloseDoors()
+ 
+     DoorClose(BG_VOP_OBJECT_DOOR_A);
+     DoorClose(BG_VOP_OBJECT_DOOR_H);
++
++    for (uint32 i = BG_VOP_OBJECT_ORB_1; i <= BG_VOP_OBJECT_ORB_4; ++i)
++        SpawnBGObject(i, RESPAWN_ONE_DAY);
+ }
+ 
+ void BattlegroundVOP::StartingEventOpenDoors()
+@@ -109,25 +108,80 @@ void BattlegroundVOP::StartingEventOpenDoors()
+         SpawnBGObject(i, RESPAWN_IMMEDIATELY);
+ }
+ 
+-void BattlegroundVOP::RemovePlayer(Player* player, uint64 guid, uint32 /*team*/) { }
++void BattlegroundVOP::RemovePlayer(Player* player, uint64 guid, uint32 /*team*/)
++{
++    uint8 index = GetOrbIndex(guid);
++    if (index != BG_VOP_MAX_ORBS)
++        DropOrb(index, player);
++}
+ 
+-void BattlegroundVOP::UpdateTeamScore(uint32 Team)
++uint8 BattlegroundVOP::GetOrbIndex(uint64 guid) const
+ {
+-    uint32 score = GetTeamScore(Team);
++    for (uint8 i = 0; i < BG_VOP_MAX_ORBS; ++i)
++        if (m_OrbKeepers[i] == guid)
++            return i;
+ 
+-    if (score >= BG_VOP_MAX_TEAM_SCORE)
++    return BG_VOP_MAX_ORBS;
++}
++
++// The points a carrier scores depend on where it stands: 3 outside, 4 in the middle ring and 5 in the centre
++uint32 BattlegroundVOP::GetCarrierPoints(Player const* player) const
++{
++    uint32 points = 3;
++    uint32 const triggers[2] = { BG_VOP_TRIGGER_MIDDLE_RING, BG_VOP_TRIGGER_CENTRE };
++    for (uint8 i = 0; i < 2; ++i)
+     {
+-        score = BG_VOP_MAX_TEAM_SCORE;
+-        if (Team == TEAM_ALLIANCE)
+-            EndBattleground(ALLIANCE);
+-        else
+-            EndBattleground(HORDE);
++        AreaTriggerEntry const* trigger = sAreaTriggerStore.LookupEntry(triggers[i]);
++        if (!trigger)
++            break;
++
++        // the trigger boxes are turned around their centre, so turn the player the other way
++        double rotation = 2 * M_PI - trigger->box_orientation;
++        float dx = player->GetPositionX() - trigger->x;
++        float dy = player->GetPositionY() - trigger->y;
++        float rotX = float(dx * std::cos(rotation) - dy * std::sin(rotation));
++        float rotY = float(dy * std::cos(rotation) + dx * std::sin(rotation));
++        if (fabs(rotX) > trigger->box_x / 2 || fabs(rotY) > trigger->box_y / 2)
++            break;
++
++        ++points;
+     }
+ 
++    return points;
++}
++
++void BattlegroundVOP::UpdateTeamScore(uint32 Team)
++{
++    uint32 score = GetTeamScore(Team);
++
+     if (Team == TEAM_ALLIANCE)
+         UpdateWorldState(BG_VOP_OP_RESOURCES_A, score);
+     else
+         UpdateWorldState(BG_VOP_OP_RESOURCES_H, score);
++
++    if (score >= BG_VOP_MAX_TEAM_SCORE)
++        EndBattleground(Team == TEAM_ALLIANCE ? ALLIANCE : HORDE);
++}
++
++void BattlegroundVOP::AddScore(Player* player, uint32 value)
++{
++    if (GetStatus() != STATUS_IN_PROGRESS)
++        return;
++
++    uint32 team = player->GetBGTeam() == ALLIANCE ? TEAM_ALLIANCE : TEAM_HORDE;
++
++    m_TeamScores[team] = std::min<int32>(m_TeamScores[team] + value, BG_VOP_MAX_TEAM_SCORE);
++    m_LastScoreTeam = player->GetBGTeam();
++    UpdatePlayerScore(player, SCORE_ORB_SCORE, value);
++
++    m_HonorScoreTics[team] += value;
++    while (m_HonorScoreTics[team] >= m_HonorTics)
++    {
++        RewardHonorToTeam(GetBonusHonorFromKill(1), player->GetBGTeam());
++        m_HonorScoreTics[team] -= m_HonorTics;
++    }
++
++    UpdateTeamScore(team);
+ }
+ 
+ void BattlegroundVOP::EventPlayerClickedOnFlag(Player* player, GameObject* target_obj)
+@@ -135,51 +189,73 @@ void BattlegroundVOP::EventPlayerClickedOnFlag(Player* player, GameObject* targe
+     if (GetStatus() != STATUS_IN_PROGRESS)
+         return;
+ 
+-    if (player->HasAura(BG_VOP_SPELL_ORB_PICKED_UP_1) ||
+-        player->HasAura(BG_VOP_SPELL_ORB_PICKED_UP_2) ||
+-        player->HasAura(BG_VOP_SPELL_ORB_PICKED_UP_3) ||
+-        player->HasAura(BG_VOP_SPELL_ORB_PICKED_UP_4))
++    if (!player->IsWithinDistInMap(target_obj, 10))
++        return;
++
++    uint32 index = target_obj->GetEntry() - BG_VOP_OBJECT_ORB_1_ENTRY;
++    if (index >= BG_VOP_MAX_ORBS)
+         return;
+ 
+-    switch (target_obj->GetEntry())
++    // the click can arrive twice, and a player carries one orb only
++    if (m_OrbKeepers[index] || GetOrbIndex(player->GetGUID()) != BG_VOP_MAX_ORBS)
++        return;
++
++    TakeOrb(player, index);
++}
++
++void BattlegroundVOP::TakeOrb(Player* player, uint8 index)
++{
++    bool alliance = player->GetBGTeam() == ALLIANCE;
++
++    player->CastSpell(player, alliance ? BG_VOP_SPELL_ALLIANCE_INSIGNIA : BG_VOP_SPELL_HORDE_INSIGNIA, true);
++    player->CastSpell(player, BG_VOP_OrbSpells[index], true);
++    if (!player->HasAura(BG_VOP_OrbSpells[index]))
+     {
+-        case BG_VOP_OBJECT_ORB_1_ENTRY:
+-        {
+-            PlaySoundToAll(BG_VOP_SOUND_ORB);
+-            player->CastSpell(player, BG_VOP_SPELL_ORB_PICKED_UP_3);
+-            SpawnBGObject(BG_VOP_OBJECT_ORB_1, RESPAWN_ONE_DAY);
+-            m_FlagKeeper[0] = player->GetGUID();
+-            break;
+-        }
+-        case BG_VOP_OBJECT_ORB_2_ENTRY:
+-        {
+-            PlaySoundToAll(BG_VOP_SOUND_ORB);
+-            player->CastSpell(player, BG_VOP_SPELL_ORB_PICKED_UP_2);
+-            SpawnBGObject(BG_VOP_OBJECT_ORB_2, RESPAWN_ONE_DAY);
+-            m_FlagKeeper[1] = player->GetGUID();
+-            break;
+-        }
+-        case BG_VOP_OBJECT_ORB_3_ENTRY:
+-        {
+-            PlaySoundToAll(BG_VOP_SOUND_ORB);
+-            player->CastSpell(player, BG_VOP_SPELL_ORB_PICKED_UP_4);
+-            SpawnBGObject(BG_VOP_OBJECT_ORB_3, RESPAWN_ONE_DAY);
+-            m_FlagKeeper[2] = player->GetGUID();
+-            break;
+-        }
+-        case BG_VOP_OBJECT_ORB_4_ENTRY:
+-        {
+-            PlaySoundToAll(BG_VOP_SOUND_ORB);
+-            player->CastSpell(player, BG_VOP_SPELL_ORB_PICKED_UP_1);
+-            SpawnBGObject(BG_VOP_OBJECT_ORB_4, RESPAWN_ONE_DAY);
+-            m_FlagKeeper[3] = player->GetGUID();
+-            break;
+-        }
+-        default:
+-            break;
++        player->RemoveAurasDueToSpell(alliance ? BG_VOP_SPELL_ALLIANCE_INSIGNIA : BG_VOP_SPELL_HORDE_INSIGNIA);
++        return;
+     }
+ 
++    m_OrbKeepers[index] = player->GetGUID();
++    m_OrbTimers[index] = 0;
++
++    PlaySoundToAll(BG_VOP_SOUND_ORB);
++    SpawnBGObject(BG_VOP_OBJECT_ORB_1 + index, RESPAWN_ONE_DAY);
++    if (Creature* aura = GetBGCreature(BG_VOP_CREATURE_ORB_AURA_1 + index))
++        aura->RemoveAllAuras();
++
++    UpdateWorldState(BG_VOP_OrbWorldStates[index], 0);
+     UpdatePlayerScore(player, SCORE_ORB_CONTROL, 1);
++    SendMessageToAll(LANG_BG_VOP_PICKEDUP_BLUE + index, alliance ? ChatMsg::CHAT_MSG_BG_SYSTEM_ALLIANCE : ChatMsg::CHAT_MSG_BG_SYSTEM_HORDE, player);
++    player->RemoveAurasWithInterruptFlags(AURA_INTERRUPT_FLAG_ENTER_PVP_COMBAT);
++}
++
++void BattlegroundVOP::ReleaseOrb(Player* player)
++{
++    uint8 index = GetOrbIndex(player->GetGUID());
++    if (index != BG_VOP_MAX_ORBS)
++        DropOrb(index, player);
++}
++
++void BattlegroundVOP::DropOrb(uint8 index, Player* player)
++{
++    // Forget the keeper first: removing the orb aura calls ReleaseOrb again
++    m_OrbKeepers[index] = 0;
++    m_OrbTimers[index] = 0;
++
++    if (player)
++    {
++        player->RemoveAurasDueToSpell(BG_VOP_SPELL_ALLIANCE_INSIGNIA);
++        player->RemoveAurasDueToSpell(BG_VOP_SPELL_HORDE_INSIGNIA);
++        player->RemoveAurasDueToSpell(BG_VOP_OrbSpells[index]);
++    }
++
++    PlaySoundToAll(BG_VOP_SOUND_ORB);
++    SpawnBGObject(BG_VOP_OBJECT_ORB_1 + index, RESPAWN_IMMEDIATELY);
++    if (Creature* aura = GetBGCreature(BG_VOP_CREATURE_ORB_AURA_1 + index))
++        aura->AddAura(BG_VOP_OrbAuras[index], aura);
++
++    UpdateWorldState(BG_VOP_OrbWorldStates[index], 1);
++    SendMessageToAll(BG_VOP_DroppedStrings[index], ChatMsg::CHAT_MSG_RAID_BOSS_EMOTE, player);
+ }
+ 
+ bool BattlegroundVOP::SetupBattleground()
+@@ -207,42 +283,19 @@ bool BattlegroundVOP::SetupBattleground()
+         return false;
+     }
+ 
+-    if (!AddObject(BG_VOP_OBJECT_ORB_1, BG_VOP_OBJECT_ORB_1_ENTRY, 1716.78f, 1416.64f, 13.5709f, 1.57239f, 0, 0, sin(1.57239f / 2), cos(1.57239f / 2), RESPAWN_ONE_DAY))
+-    {
+-        SF_LOG_ERROR("battlegrounds", "BattlegroundVOP: Failed to spawn ball object. Battleground not created!");
+-        return false;
+-    }
+-
+-    if (Creature* trigger3 = AddCreature(WORLD_TRIGGER, BG_VOP_CREATURE_ORB_AURA_3, TEAM_NEUTRAL, 1716.78f, 1416.64f, 13.5709f, 1.57239f, RESPAWN_IMMEDIATELY))
+-        trigger3->AddAura(BG_VOP_SPELL_ORB_AURA_3, trigger3);
+-
+-    if (!AddObject(BG_VOP_OBJECT_ORB_2, BG_VOP_OBJECT_ORB_2_ENTRY, 1850.26f, 1416.77f, 13.5709f, 1.56061f, 0, 0, sin(1.56061f / 2), cos(1.56061f / 2), RESPAWN_ONE_DAY))
++    for (uint8 i = 0; i < BG_VOP_MAX_ORBS; ++i)
+     {
+-        SF_LOG_ERROR("battlegrounds", "BattlegroundVOP: Failed to spawn ball object. Battleground not created!");
+-        return false;
+-    }
+-
+-    if (Creature* trigger2 = AddCreature(WORLD_TRIGGER, BG_VOP_CREATURE_ORB_AURA_2, TEAM_NEUTRAL, 1850.26f, 1416.77f, 13.5709f, 1.56061f, RESPAWN_IMMEDIATELY))
+-        trigger2->AddAura(BG_VOP_SPELL_ORB_AURA_2, trigger2);
+-
+-    if (!AddObject(BG_VOP_OBJECT_ORB_3, BG_VOP_OBJECT_ORB_3_ENTRY, 1850.29f, 1250.31f, 13.5708f, 4.70848f, 0, 0, sin(4.70848f / 2), cos(4.70848f / 2), RESPAWN_ONE_DAY))
+-    {
+-        SF_LOG_ERROR("battlegrounds", "BattlegroundVOP: Failed to spawn ball object. Battleground not created!");
+-        return false;
+-    }
+-
+-    if (Creature* trigger4 = AddCreature(WORLD_TRIGGER, BG_VOP_CREATURE_ORB_AURA_4, TEAM_NEUTRAL, 1850.29f, 1250.31f, 13.5708f, 4.70848f, RESPAWN_IMMEDIATELY))
+-        trigger4->AddAura(BG_VOP_SPELL_ORB_AURA_4, trigger4);
++        float const* position = BG_VOP_OrbPositions[i];
++        if (!AddObject(BG_VOP_OBJECT_ORB_1 + i, BG_VOP_OBJECT_ORB_1_ENTRY + i, position[0], position[1], position[2], position[3], 0, 0, sin(position[3] / 2), cos(position[3] / 2), RESPAWN_ONE_DAY))
++        {
++            SF_LOG_ERROR("battlegrounds", "BattlegroundVOP: Failed to spawn ball object. Battleground not created!");
++            return false;
++        }
+ 
+-    if (!AddObject(BG_VOP_OBJECT_ORB_4, BG_VOP_OBJECT_ORB_4_ENTRY, 1716.83f, 1249.93f, 13.5706f, 4.71397f, 0, 0, sin(4.71397f / 2), cos(4.71397f / 2), RESPAWN_ONE_DAY))
+-    {
+-        SF_LOG_ERROR("battlegrounds", "BattlegroundVOP: Failed to spawn ball object. Battleground not created!");
+-        return false;
++        if (Creature* trigger = AddCreature(WORLD_TRIGGER, BG_VOP_CREATURE_ORB_AURA_1 + i, TEAM_NEUTRAL, position[0], position[1], position[2], position[3], RESPAWN_IMMEDIATELY))
++            trigger->AddAura(BG_VOP_OrbAuras[i], trigger);
+     }
+ 
+-    if (Creature* trigger1 = AddCreature(WORLD_TRIGGER, BG_VOP_CREATURE_ORB_AURA_1, TEAM_NEUTRAL, 1716.83f, 1249.93f, 13.5706f, 4.71397f, RESPAWN_IMMEDIATELY))
+-        trigger1->AddAura(BG_VOP_SPELL_ORB_AURA_1, trigger1);
+-
+     return true;
+ }
+ 
+@@ -257,6 +310,11 @@ void BattlegroundVOP::EndBattleground(uint32 winner)
+     RewardHonorToTeam(GetBonusHonorFromKill(1), ALLIANCE);
+     RewardHonorToTeam(GetBonusHonorFromKill(1), HORDE);
+ 
++    for (BattlegroundPlayerMap::const_iterator itr = GetPlayers().begin(); itr != GetPlayers().end(); ++itr)
++        if (itr->second.Team == winner)
++            if (Player* player = ObjectAccessor::FindPlayer(itr->first))
++                player->KilledMonsterCredit(BG_VOP_QUEST_CREDIT_WINNER);
++
+     Battleground::EndBattleground(winner);
+ }
+ 
+@@ -267,15 +325,17 @@ void BattlegroundVOP::Reset()
+ 
+     m_TeamScores[TEAM_ALLIANCE] = 0;
+     m_TeamScores[TEAM_HORDE] = 0;
+-    m_lastTick[TEAM_ALLIANCE] = 0;
+-    m_lastTick[TEAM_HORDE] = 0;
+-    m_FlagKeeper[0] = 0;
+-    m_FlagKeeper[1] = 0;
+-    m_FlagKeeper[2] = 0;
+-    m_FlagKeeper[3] = 0;
++    for (uint8 i = 0; i < BG_VOP_MAX_ORBS; ++i)
++    {
++        m_OrbKeepers[i] = 0;
++        m_OrbTimers[i] = 0;
++    }
+     m_HonorScoreTics[TEAM_ALLIANCE] = 0;
+     m_HonorScoreTics[TEAM_HORDE] = 0;
+     m_HonorTics = 260;
++    m_PlayTime = 0;
++    m_MinutesElapsed = 0;
++    m_LastScoreTeam = WINNER_NONE;
+ }
+ 
+ void BattlegroundVOP::AddPlayer(Player* player)
+@@ -291,54 +351,15 @@ void BattlegroundVOP::HandleKillPlayer(Player* player, Player* killer)
+     if (GetStatus() != STATUS_IN_PROGRESS)
+         return;
+ 
+-    int32 message_id = 0;
++    ReleaseOrb(player);
+ 
+-    if (m_FlagKeeper[0] == player->GetGUID())
+-    {
+-        message_id = LANG_BG_VOP_DROPPED_GREEN;
+-        SendMessageToAll(message_id, ChatMsg::CHAT_MSG_RAID_BOSS_EMOTE, player);
+-        PlaySoundToAll(BG_VOP_SOUND_ORB);
+-        SpawnBGObject(BG_VOP_OBJECT_ORB_1, RESPAWN_IMMEDIATELY);
+-        m_FlagKeeper[0] = 0;
+-    }
+-    if (m_FlagKeeper[1] == player->GetGUID())
+-    {
+-        message_id = LANG_BG_VOP_DROPPED_PURPLE;
+-        SendMessageToAll(message_id, ChatMsg::CHAT_MSG_RAID_BOSS_EMOTE, player);
+-        PlaySoundToAll(BG_VOP_SOUND_ORB);
+-        SpawnBGObject(BG_VOP_OBJECT_ORB_2, RESPAWN_IMMEDIATELY);
+-        m_FlagKeeper[1] = 0;
+-    }
+-    if (m_FlagKeeper[2] == player->GetGUID())
+-    {
+-        message_id = LANG_BG_VOP_DROPPED_ORANGE;
+-        SendMessageToAll(message_id, ChatMsg::CHAT_MSG_RAID_BOSS_EMOTE, player);
+-        PlaySoundToAll(BG_VOP_SOUND_ORB);
+-        SpawnBGObject(BG_VOP_OBJECT_ORB_3, RESPAWN_IMMEDIATELY);
+-        m_FlagKeeper[2] = 0;
+-    }
+-    if (m_FlagKeeper[3] == player->GetGUID())
+-    {
+-        message_id = LANG_BG_VOP_DROPPED_BLUE;
+-        SendMessageToAll(message_id, ChatMsg::CHAT_MSG_RAID_BOSS_EMOTE, player);
+-        PlaySoundToAll(BG_VOP_SOUND_ORB);
+-        SpawnBGObject(BG_VOP_OBJECT_ORB_4, RESPAWN_IMMEDIATELY);
+-        m_FlagKeeper[3] = 0;
+-    }
++    Battleground::HandleKillPlayer(player, killer);
+ 
+-    if (killer->GetBGTeam() == ALLIANCE)
++    if (killer && killer != player)
+     {
+-        m_TeamScores[TEAM_ALLIANCE] += BG_VOP_PK_VP;
+-        UpdateWorldState(BG_VOP_OP_RESOURCES_A, m_TeamScores[TEAM_ALLIANCE]);
++        killer->CastSpell(killer, BG_VOP_SPELL_10_VICTORY_POINTS, true);
++        AddScore(killer, BG_VOP_KILL_POINTS);
+     }
+-    else if (killer->GetBGTeam() == HORDE)
+-    {
+-        m_TeamScores[TEAM_HORDE] += BG_VOP_PK_VP;
+-        UpdateWorldState(BG_VOP_OP_RESOURCES_H, m_TeamScores[TEAM_HORDE]);
+-    }
+-    UpdatePlayerScore(killer, SCORE_ORB_SCORE, BG_VOP_PK_VP);
+-
+-    Battleground::HandleKillPlayer(player, killer);
+ }
+ 
+ void BattlegroundVOP::UpdatePlayerScore(Player* player, uint32 type, uint32 value, bool doAddHonor)
+@@ -363,12 +384,13 @@ void BattlegroundVOP::UpdatePlayerScore(Player* player, uint32 type, uint32 valu
+ 
+ WorldSafeLocsEntry const* BattlegroundVOP::GetClosestGraveYard(Player* player)
+ {
++    // The graveyards of the main field are used while the match runs, before it the ones inside the start rooms
+     uint32 g_id = 0;
+ 
+-    switch (player->GetTeam())
++    switch (player->GetBGTeam())
+     {
+-        case ALLIANCE: g_id = 3552; break;
+-        case HORDE:    g_id = 3553; break;
++        case ALLIANCE: g_id = GetStatus() == STATUS_IN_PROGRESS ? 3552 : 4058; break;
++        case HORDE:    g_id = GetStatus() == STATUS_IN_PROGRESS ? 3553 : 4057; break;
+         default:       return NULL;
+     }
+ 
+@@ -381,8 +403,6 @@ WorldSafeLocsEntry const* BattlegroundVOP::GetClosestGraveYard(Player* player)
+         return NULL;
+     }
+ 
+-    //@TODO: check nearest gy.
+-
+     return entry;
+ }
+ 
+@@ -390,9 +410,14 @@ void BattlegroundVOP::FillInitialWorldStates(WorldStateBuilder& builder)
+ {
+     // Team scores
+     builder.AppendState(BG_VOP_OP_RESOURCES_MAX, BG_VOP_MAX_TEAM_SCORE);
+-    //builder.AppendState(BG_VOP_OP_RESOURCES_WARNING, BG_VOP_WARNING_NEAR_VICTORY_SCORE);
+     builder.AppendState(BG_VOP_OP_RESOURCES_A, m_TeamScores[TEAM_ALLIANCE]);
+     builder.AppendState(BG_VOP_OP_RESOURCES_H, m_TeamScores[TEAM_HORDE]);
++
++    builder.AppendState(BG_VOP_TIME_ENABLED, 1);
++    builder.AppendState(BG_VOP_TIME_REMAINING, BG_VOP_MATCH_MINUTES - m_MinutesElapsed);
++
++    for (uint8 i = 0; i < BG_VOP_MAX_ORBS; ++i)
++        builder.AppendState(BG_VOP_OrbWorldStates[i], m_OrbKeepers[i] ? 0 : 1);
+ }
+ 
+ uint32 BattlegroundVOP::GetPrematureWinner()
+diff --git a/src/server/game/Battlegrounds/Zones/BattlegroundVOP.h b/src/server/game/Battlegrounds/Zones/BattlegroundVOP.h
+index 49c66b548d..0238f70f66 100644
+--- a/src/server/game/Battlegrounds/Zones/BattlegroundVOP.h
++++ b/src/server/game/Battlegrounds/Zones/BattlegroundVOP.h
+@@ -9,6 +9,7 @@
+ #include "Battleground.h"
+ 
+ #define BG_VOP_MAX_TEAM_SCORE 1600
++#define BG_VOP_MAX_ORBS 4
+ 
+ enum BG_VOP_Spells
+ {
+@@ -20,7 +21,14 @@ enum BG_VOP_Spells
+     BG_VOP_SPELL_ORB_AURA_1 = 121217,
+     BG_VOP_SPELL_ORB_AURA_2 = 121219,
+     BG_VOP_SPELL_ORB_AURA_3 = 121220,
+-    BG_VOP_SPELL_ORB_AURA_4 = 121221
++    BG_VOP_SPELL_ORB_AURA_4 = 121221,
++
++    BG_VOP_SPELL_ALLIANCE_INSIGNIA = 131527,
++    BG_VOP_SPELL_HORDE_INSIGNIA = 131528,
++    BG_VOP_SPELL_10_VICTORY_POINTS = 112910,
++    BG_VOP_SPELL_3_VICTORY_POINTS = 112912,
++    BG_VOP_SPELL_4_VICTORY_POINTS = 112913,
++    BG_VOP_SPELL_5_VICTORY_POINTS = 112914
+ };
+ 
+ enum BG_VOP_Objects
+@@ -47,6 +55,7 @@ enum BG_VOP_Creatures
+     BG_VOP_CREATURE_MAX = 6
+ };
+ 
++// The orbs are blue, purple, green and orange, in the order of their entries
+ enum BG_VOP_Objets_Entry
+ {
+     BG_VOP_OBJECT_DOOR_ENTRY = 213172,
+@@ -55,18 +64,49 @@ enum BG_VOP_Objets_Entry
+     BG_VOP_OBJECT_ORB_3_ENTRY = 212093,
+     BG_VOP_OBJECT_ORB_4_ENTRY = 212094,
+ };
++
+ enum BG_VOP_WorldStates
+ {
+     BG_VOP_OP_RESOURCES_MAX = 1780,
+     BG_VOP_OP_RESOURCES_A = 6303,
+-    BG_VOP_OP_RESOURCES_H = 6304
++    BG_VOP_OP_RESOURCES_H = 6304,
++    BG_VOP_BLUE_ORB_AVAILABLE = 6714,
++    BG_VOP_PURPLE_ORB_AVAILABLE = 6715,
++    BG_VOP_GREEN_ORB_AVAILABLE = 6716,
++    BG_VOP_ORANGE_ORB_AVAILABLE = 6717,
++    BG_VOP_TIME_ENABLED = 4247,
++    BG_VOP_TIME_REMAINING = 4248
++};
++
++enum BG_VOP_Triggers
++{
++    BG_VOP_TRIGGER_MIDDLE_RING = 7734,
++    BG_VOP_TRIGGER_CENTRE = 7735
++};
++
++enum BG_VOP_Misc
++{
++    BG_VOP_MATCH_MINUTES = 25,
++    BG_VOP_CARRIER_TICK = 5000,                  // ms
++    BG_VOP_KILL_POINTS = 10,
++    BG_VOP_QUEST_CREDIT_WINNER = 68931
++};
++
++uint32 const BG_VOP_OrbSpells[BG_VOP_MAX_ORBS] =
++{
++    BG_VOP_SPELL_ORB_PICKED_UP_1, BG_VOP_SPELL_ORB_PICKED_UP_2, BG_VOP_SPELL_ORB_PICKED_UP_3, BG_VOP_SPELL_ORB_PICKED_UP_4
+ };
+ 
+-// Tick intervals and given points: case 0, 1, 2, 3, 4
+-const uint32 BG_VOP_TickIntervals[5] = { 15000, 12000, 9000, 6000, 3000 };
+-const uint32 BG_VOP_TickPoints[5] = { 0, 10, 10, 10, 10 };
++uint32 const BG_VOP_OrbAuras[BG_VOP_MAX_ORBS] =
++{
++    BG_VOP_SPELL_ORB_AURA_1, BG_VOP_SPELL_ORB_AURA_2, BG_VOP_SPELL_ORB_AURA_3, BG_VOP_SPELL_ORB_AURA_4
++};
++
++uint32 const BG_VOP_OrbWorldStates[BG_VOP_MAX_ORBS] =
++{
++    BG_VOP_BLUE_ORB_AVAILABLE, BG_VOP_PURPLE_ORB_AVAILABLE, BG_VOP_GREEN_ORB_AVAILABLE, BG_VOP_ORANGE_ORB_AVAILABLE
++};
+ 
+-const uint32 BG_VOP_PK_VP = 10;
+ const uint32 BG_VOP_SOUND_ORB = 8174;
+ 
+ struct BattlegroundVOPScore : public BattlegroundScore
+@@ -101,12 +141,22 @@ public:
+     uint32 GetPrematureWinner() OVERRIDE;
+     void PostUpdateImpl(uint32 diff) OVERRIDE;
+ 
++    void ReleaseOrb(Player* player);
++
+ private:
+-    uint64 m_FlagKeeper[4] = { };
++    uint8 GetOrbIndex(uint64 guid) const;
++    void TakeOrb(Player* player, uint8 index);
++    void DropOrb(uint8 index, Player* player);
++    void AddScore(Player* player, uint32 value);
++    uint32 GetCarrierPoints(Player const* player) const;
++
++    uint64 m_OrbKeepers[BG_VOP_MAX_ORBS] = { };
++    uint32 m_OrbTimers[BG_VOP_MAX_ORBS] = { };
+     uint32 m_HonorScoreTics[BG_TEAMS_COUNT] = { };
+-    uint32 m_HonorTics;
+-    uint32 m_lastTick[BG_TEAMS_COUNT] = { };
+-    bool   m_TeamScores500Disadvantage[BG_TEAMS_COUNT] = { };
++    uint32 m_HonorTics = 260;
++    uint32 m_PlayTime = 0;
++    uint8 m_MinutesElapsed = 0;
++    uint32 m_LastScoreTeam = WINNER_NONE;
+ };
+ 
+ #endif
+diff --git a/src/server/game/Miscellaneous/Language.h b/src/server/game/Miscellaneous/Language.h
+index 96f11d00b3..e7cbb3f77f 100644
+--- a/src/server/game/Miscellaneous/Language.h
++++ b/src/server/game/Miscellaneous/Language.h
+@@ -1313,5 +1313,11 @@ enum SkyFireStrings
+     LANG_BG_DG_RETURNED_HORDE_CART = 12140,
+     LANG_BG_DG_DROPPED_ALLIANCE_CART = 12141,
+     LANG_BG_DG_DROPPED_HORDE_CART = 12142,
++
++    // Temple of Kotmogu
++    LANG_BG_VOP_PICKEDUP_BLUE = 12150,
++    LANG_BG_VOP_PICKEDUP_PURPLE = 12151,
++    LANG_BG_VOP_PICKEDUP_GREEN = 12152,
++    LANG_BG_VOP_PICKEDUP_ORANGE = 12153,
+ };
+ #endif
+diff --git a/src/server/game/Scripting/ScriptLoader.cpp b/src/server/game/Scripting/ScriptLoader.cpp
+index dc43950d09..c3b01b0987 100644
+--- a/src/server/game/Scripting/ScriptLoader.cpp
++++ b/src/server/game/Scripting/ScriptLoader.cpp
+@@ -646,6 +646,7 @@ void AddSC_shaman_pet_scripts();
+ 
+ // battlegrounds
+ void AddSC_deepwind_gorge();
++void AddSC_temple_of_kotmogu();
+ 
+ // outdoor pvp
+ void AddSC_outdoorpvp_hp();
+@@ -1385,6 +1386,7 @@ void AddBattlegroundScripts()
+ {
+ #ifdef SCRIPTS
+     AddSC_deepwind_gorge();
++    AddSC_temple_of_kotmogu();
+ #endif
+ }
+ 
+diff --git a/src/server/scripts/Pandaria/Battlegrounds/temple_of_kotmogu.cpp b/src/server/scripts/Pandaria/Battlegrounds/temple_of_kotmogu.cpp
+new file mode 100644
+index 0000000000..722e38ba5b
+--- /dev/null
++++ b/src/server/scripts/Pandaria/Battlegrounds/temple_of_kotmogu.cpp
+@@ -0,0 +1,65 @@
++/*
++* This file is part of the Pandaria 5.4.8 Project. See THANKS file for Copyright information
++*
++* This program is free software; you can redistribute it and/or modify it
++* under the terms of the GNU General Public License as published by the
++* Free Software Foundation; either version 2 of the License, or (at your
++* option) any later version.
++*
++* This program is distributed in the hope that it will be useful, but WITHOUT
++* ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++* FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
++* more details.
++*
++* You should have received a copy of the GNU General Public License along
++* with this program. If not, see <http://www.gnu.org/licenses/>.
++*/
++
++#include "BattlegroundVOP.h"
++#include "Player.h"
++#include "ScriptMgr.h"
++#include "SpellAuraEffects.h"
++#include "SpellScript.h"
++
++enum TempleOfKotmogu
++{
++    ORB_EFFECT_SCALE         = 4,
++    ORB_SCALE_PER_TICK       = 5
++};
++
++// 121164, 121175, 121176, 121177 - Orb of Power
++class spell_kotmogu_orb_of_power : public AuraScript
++{
++    PrepareAuraScript(spell_kotmogu_orb_of_power);
++
++    // The orb goes back to its pedestal when the aura ends
++    void HandleOnRemove(AuraEffect const* /*aurEff*/, AuraEffectHandleModes /*mode*/)
++    {
++        if (Player* player = GetTarget()->ToPlayer())
++            if (Battleground* bg = player->GetBattleground())
++                if (bg->GetTypeID(true) == BattlegroundTypeId::BATTLEGROUND_VOP)
++                    static_cast<BattlegroundVOP*>(bg)->ReleaseOrb(player);
++    }
++
++    // Every tick adds the base amount again to the damage, healing and damage taken effects and makes the carrier bigger
++    void HandleTick(AuraEffect const* /*aurEff*/)
++    {
++        for (uint8 effIndex = EFFECT_0; effIndex <= EFFECT_2; ++effIndex)
++            if (AuraEffect* effect = GetAura()->GetEffect(effIndex))
++                effect->ChangeAmount(effect->GetAmount() + effect->GetBaseAmount());
++
++        if (AuraEffect* scale = GetAura()->GetEffect(ORB_EFFECT_SCALE))
++            scale->ChangeAmount(scale->GetAmount() + ORB_SCALE_PER_TICK);
++    }
++
++    void Register() OVERRIDE
++    {
++        OnEffectRemove += AuraEffectRemoveFn(spell_kotmogu_orb_of_power::HandleOnRemove, EFFECT_3, SPELL_AURA_PERIODIC_DUMMY, AURA_EFFECT_HANDLE_REAL);
++        OnEffectPeriodic += AuraEffectPeriodicFn(spell_kotmogu_orb_of_power::HandleTick, EFFECT_3, SPELL_AURA_PERIODIC_DUMMY);
++    }
++};
++
++void AddSC_temple_of_kotmogu()
++{
++    RegisterAuraScript(spell_kotmogu_orb_of_power);
++}
+diff --git a/src/server/scripts/Pandaria/CMakeLists.txt b/src/server/scripts/Pandaria/CMakeLists.txt
+index 2192f7707d..fd0104c03c 100644
+--- a/src/server/scripts/Pandaria/CMakeLists.txt
++++ b/src/server/scripts/Pandaria/CMakeLists.txt
+@@ -6,6 +6,7 @@
+ set(scripts_STAT_SRCS
+   ${scripts_STAT_SRCS}
+   Pandaria/Battlegrounds/deepwind_gorge.cpp
++  Pandaria/Battlegrounds/temple_of_kotmogu.cpp
+   Pandaria/StormstoutBrewery/boss_hoptallus.cpp
+   Pandaria/StormstoutBrewery/boss_ook_ook.cpp
+   Pandaria/StormstoutBrewery/stormstout_brewery.cpp

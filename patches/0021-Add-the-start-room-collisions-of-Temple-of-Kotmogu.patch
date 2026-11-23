@@ -1,0 +1,145 @@
+From 228fa8d9acb605e1dba9de4e276dcc8d9c46a5a4 Mon Sep 17 00:00:00 2001
+From: sardi-dev <134648583+sardi-dev@users.noreply.github.com>
+Date: Thu, 19 Nov 2026 00:19:50 +0000
+Subject: [PATCH 21/25] Add the start room collisions of Temple of Kotmogu
+
+The doors of the start rooms opened with the match, but the map has a
+second object at each door that keeps the players in. Spawn it with the
+doors and open it at the start, and open the doors themselves 6 seconds
+earlier so that they are open when the match begins.
+
+Based on Legends of Azeroth 5.4.8.
+---
+ .../Battlegrounds/Zones/BattlegroundVOP.cpp   | 38 ++++++++++++++++---
+ .../Battlegrounds/Zones/BattlegroundVOP.h     |  9 ++++-
+ 2 files changed, 39 insertions(+), 8 deletions(-)
+
+diff --git a/src/server/game/Battlegrounds/Zones/BattlegroundVOP.cpp b/src/server/game/Battlegrounds/Zones/BattlegroundVOP.cpp
+index 5fac45b32d..ecd12c4674 100644
+--- a/src/server/game/Battlegrounds/Zones/BattlegroundVOP.cpp
++++ b/src/server/game/Battlegrounds/Zones/BattlegroundVOP.cpp
+@@ -14,6 +14,12 @@
+ #include "World.h"
+ #include "WorldPacket.h"
+ 
++float const BG_VOP_DoorPositions[2][4] =
++{
++    { 1783.84f, 1100.66f, 20.60f, 1.625020f },      // alliance
++    { 1780.15f, 1570.22f, 24.59f, 4.711630f }       // horde
++};
++
+ float const BG_VOP_OrbPositions[BG_VOP_MAX_ORBS][4] =
+ {
+     { 1716.83f, 1249.93f, 13.5706f, 4.71397f },     // blue
+@@ -41,6 +47,14 @@ BattlegroundVOP::BattlegroundVOP()
+ 
+ void BattlegroundVOP::PostUpdateImpl(uint32 diff)
+ {
++    // The doors open a few seconds before the start, the collision opens with it
++    if (GetStatus() == STATUS_WAIT_JOIN && !m_DoorsOpened && (m_Events & BG_STARTING_EVENT_1) && GetStartDelayTime() <= BG_VOP_DOORS_OPEN_BEFORE_START)
++    {
++        DoorOpen(BG_VOP_OBJECT_DOOR_A);
++        DoorOpen(BG_VOP_OBJECT_DOOR_H);
++        m_DoorsOpened = true;
++    }
++
+     if (GetStatus() != STATUS_IN_PROGRESS)
+         return;
+ 
+@@ -92,8 +106,13 @@ void BattlegroundVOP::StartingEventCloseDoors()
+     SpawnBGObject(BG_VOP_OBJECT_DOOR_A, RESPAWN_IMMEDIATELY);
+     SpawnBGObject(BG_VOP_OBJECT_DOOR_H, RESPAWN_IMMEDIATELY);
+ 
++    SpawnBGObject(BG_VOP_OBJECT_COLLISION_A, RESPAWN_IMMEDIATELY);
++    SpawnBGObject(BG_VOP_OBJECT_COLLISION_H, RESPAWN_IMMEDIATELY);
++
+     DoorClose(BG_VOP_OBJECT_DOOR_A);
+     DoorClose(BG_VOP_OBJECT_DOOR_H);
++    DoorClose(BG_VOP_OBJECT_COLLISION_A);
++    DoorClose(BG_VOP_OBJECT_COLLISION_H);
+ 
+     for (uint32 i = BG_VOP_OBJECT_ORB_1; i <= BG_VOP_OBJECT_ORB_4; ++i)
+         SpawnBGObject(i, RESPAWN_ONE_DAY);
+@@ -103,8 +122,10 @@ void BattlegroundVOP::StartingEventOpenDoors()
+ {
+     DoorOpen(BG_VOP_OBJECT_DOOR_A);
+     DoorOpen(BG_VOP_OBJECT_DOOR_H);
++    DoorOpen(BG_VOP_OBJECT_COLLISION_A);
++    DoorOpen(BG_VOP_OBJECT_COLLISION_H);
+ 
+-    for (uint32 i = BG_VOP_OBJECT_ORB_1; i < BG_VOP_OBJECT_MAX; ++i)
++    for (uint32 i = BG_VOP_OBJECT_ORB_1; i <= BG_VOP_OBJECT_BUFF_SOUTH; ++i)
+         SpawnBGObject(i, RESPAWN_IMMEDIATELY);
+ }
+ 
+@@ -260,12 +281,16 @@ void BattlegroundVOP::DropOrb(uint8 index, Player* player)
+ 
+ bool BattlegroundVOP::SetupBattleground()
+ {
+-    // Doors
+-    if (!AddObject(BG_VOP_OBJECT_DOOR_A, BG_VOP_OBJECT_DOOR_ENTRY, 1783.84f, 1100.66f, 20.60f, 1.625020f, 0, 0, sin(1.625020f / 2), cos(1.625020f / 2), RESPAWN_IMMEDIATELY)
+-        || !AddObject(BG_VOP_OBJECT_DOOR_H, BG_VOP_OBJECT_DOOR_ENTRY, 1780.15f, 1570.22f, 24.59f, 4.711630f, 0, 0, sin(4.711630f / 2), cos(4.711630f / 2), RESPAWN_IMMEDIATELY))
++    // Doors and the collisions that keep the players in until the start
++    for (uint8 i = 0; i < 2; ++i)
+     {
+-        SF_LOG_ERROR("battlegrounds", "BattlegroundVOP: Failed to spawn doors object. Battleground not created!");
+-        return false;
++        float const* position = BG_VOP_DoorPositions[i];
++        if (!AddObject(BG_VOP_OBJECT_DOOR_A + i, BG_VOP_OBJECT_DOOR_ENTRY, position[0], position[1], position[2], position[3], 0, 0, sin(position[3] / 2), cos(position[3] / 2), RESPAWN_IMMEDIATELY)
++            || !AddObject(BG_VOP_OBJECT_COLLISION_A + i, BG_VOP_OBJECT_COLLISION_ENTRY, position[0], position[1], position[2], position[3], 0, 0, sin(position[3] / 2), cos(position[3] / 2), RESPAWN_IMMEDIATELY))
++        {
++            SF_LOG_ERROR("battlegrounds", "BattlegroundVOP: Failed to spawn doors object. Battleground not created!");
++            return false;
++        }
+     }
+ 
+     if (!AddSpiritGuide(BG_VOP_CREATURE_SPIRIT_1, 1892.61f, 1151.69f, 14.7160f, 2.523528f, ALLIANCE)
+@@ -336,6 +361,7 @@ void BattlegroundVOP::Reset()
+     m_PlayTime = 0;
+     m_MinutesElapsed = 0;
+     m_LastScoreTeam = WINNER_NONE;
++    m_DoorsOpened = false;
+ }
+ 
+ void BattlegroundVOP::AddPlayer(Player* player)
+diff --git a/src/server/game/Battlegrounds/Zones/BattlegroundVOP.h b/src/server/game/Battlegrounds/Zones/BattlegroundVOP.h
+index 0238f70f66..064ac893d9 100644
+--- a/src/server/game/Battlegrounds/Zones/BattlegroundVOP.h
++++ b/src/server/game/Battlegrounds/Zones/BattlegroundVOP.h
+@@ -41,7 +41,9 @@ enum BG_VOP_Objects
+     BG_VOP_OBJECT_ORB_4 = 5,
+     BG_VOP_OBJECT_BUFF_NORTH = 6,
+     BG_VOP_OBJECT_BUFF_SOUTH = 7,
+-    BG_VOP_OBJECT_MAX = 8
++    BG_VOP_OBJECT_COLLISION_A = 8,
++    BG_VOP_OBJECT_COLLISION_H = 9,
++    BG_VOP_OBJECT_MAX = 10
+ };
+ 
+ enum BG_VOP_Creatures
+@@ -59,6 +61,7 @@ enum BG_VOP_Creatures
+ enum BG_VOP_Objets_Entry
+ {
+     BG_VOP_OBJECT_DOOR_ENTRY = 213172,
++    BG_VOP_OBJECT_COLLISION_ENTRY = 215787,
+     BG_VOP_OBJECT_ORB_1_ENTRY = 212091,
+     BG_VOP_OBJECT_ORB_2_ENTRY = 212092,
+     BG_VOP_OBJECT_ORB_3_ENTRY = 212093,
+@@ -89,7 +92,8 @@ enum BG_VOP_Misc
+     BG_VOP_MATCH_MINUTES = 25,
+     BG_VOP_CARRIER_TICK = 5000,                  // ms
+     BG_VOP_KILL_POINTS = 10,
+-    BG_VOP_QUEST_CREDIT_WINNER = 68931
++    BG_VOP_QUEST_CREDIT_WINNER = 68931,
++    BG_VOP_DOORS_OPEN_BEFORE_START = 6000        // ms, the collision keeps the players in until the start
+ };
+ 
+ uint32 const BG_VOP_OrbSpells[BG_VOP_MAX_ORBS] =
+@@ -157,6 +161,7 @@ private:
+     uint32 m_PlayTime = 0;
+     uint8 m_MinutesElapsed = 0;
+     uint32 m_LastScoreTeam = WINNER_NONE;
++    bool m_DoorsOpened = false;
+ };
+ 
+ #endif

@@ -1,0 +1,110 @@
+From 080d42ca879aea2112ccd744487274c208748673 Mon Sep 17 00:00:00 2001
+From: sardi-dev <134648583+sardi-dev@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 19:46:15 +0000
+Subject: [PATCH 25/25] Add Duration.h and two short getters from
+ zones-dungeons
+
+Duration.h gives the chrono shorthands (Milliseconds, Seconds and the
+std::chrono literals) and is included from Object.h and Util.h, as on
+zones-dungeons. Position::GetPosition() returns a copy of a position, and
+Player::GetTalentSpecialization() reads the active specialization. The
+module uses all three; main does not have them yet.
+
+Taken from the zones-dungeons branch (commit 088340f737 by DigiD702).
+---
+ src/server/game/Entities/Object/Object.h |  2 ++
+ src/server/game/Entities/Player/Player.h |  1 +
+ src/server/shared/Utilities/Duration.h   | 39 ++++++++++++++++++++++++
+ src/server/shared/Utilities/Util.h       |  1 +
+ 4 files changed, 43 insertions(+)
+ create mode 100644 src/server/shared/Utilities/Duration.h
+
+diff --git a/src/server/game/Entities/Object/Object.h b/src/server/game/Entities/Object/Object.h
+index e8ebf63e99..589a90cc2a 100644
+--- a/src/server/game/Entities/Object/Object.h
++++ b/src/server/game/Entities/Object/Object.h
+@@ -7,6 +7,7 @@
+ #define SF_OBJECT_H
+ 
+ #include "Common.h"
++#include "Duration.h"
+ #include "GridReference.h"
+ #include "Map.h"
+ #include "ModelIgnoreFlags.h"
+@@ -349,6 +350,7 @@ struct Position
+         if (pos)
+             pos->Relocate(m_positionX, m_positionY, m_positionZ, m_orientation);
+     }
++    Position GetPosition() const { return *this; }
+ 
+     Position::PositionXYZStreamer PositionXYZStream()
+     {
+diff --git a/src/server/game/Entities/Player/Player.h b/src/server/game/Entities/Player/Player.h
+index ed5415fea5..6e89096516 100644
+--- a/src/server/game/Entities/Player/Player.h
++++ b/src/server/game/Entities/Player/Player.h
+@@ -2107,6 +2107,7 @@ public:
+     uint32 GetTalentResetTime() const { return _talentMgr->ResetTalentsTime; }
+     void SetTalentResetTime(time_t time_) { _talentMgr->ResetTalentsTime = time_; }
+     uint32 GetTalentSpecialization(uint8 spec) const { return _talentMgr->SpecInfo[spec].TalentTree; }
++    uint32 GetTalentSpecialization() const { return GetTalentSpecialization(GetActiveSpec()); }
+     void SetTalentSpecialization(uint8 spec, uint32 tree) { _talentMgr->SpecInfo[spec].TalentTree = tree; }
+     uint8 GetActiveSpec() const { return _talentMgr->ActiveSpec; }
+     void SetActiveSpec(uint8 spec) { _talentMgr->ActiveSpec = spec; }
+diff --git a/src/server/shared/Utilities/Duration.h b/src/server/shared/Utilities/Duration.h
+new file mode 100644
+index 0000000000..a86472639e
+--- /dev/null
++++ b/src/server/shared/Utilities/Duration.h
+@@ -0,0 +1,39 @@
++/*
++* This file is part of Project SkyFire https://www.projectskyfire.org.
++* See LICENSE.md file for Copyright information
++*/
++
++#ifndef _DURATION_H_
++#define _DURATION_H_
++
++#include <chrono>
++
++ /// Microseconds shorthand typedef.
++typedef std::chrono::microseconds Microseconds;
++
++/// Milliseconds shorthand typedef.
++typedef std::chrono::milliseconds Milliseconds;
++
++/// Seconds shorthand typedef.
++typedef std::chrono::seconds Seconds;
++
++/// Minutes shorthand typedef.
++typedef std::chrono::minutes Minutes;
++
++/// time_point shorthand typedefs
++typedef std::chrono::steady_clock::time_point TimePoint;
++typedef std::chrono::system_clock::time_point SystemTimePoint;
++
++/// Hours shorthand typedef.
++typedef std::chrono::hours Hours;
++
++/// Makes std::chrono_literals globally available.
++using namespace std::chrono_literals;
++
++constexpr std::chrono::hours operator""_days(unsigned long long days)
++{
++    return std::chrono::hours(days * 24h);
++}
++
++
++#endif // _DURATION_H_
+diff --git a/src/server/shared/Utilities/Util.h b/src/server/shared/Utilities/Util.h
+index 856499c1b6..81c4405cf5 100644
+--- a/src/server/shared/Utilities/Util.h
++++ b/src/server/shared/Utilities/Util.h
+@@ -7,6 +7,7 @@
+ #define _UTIL_H
+ 
+ #include "Define.h"
++#include "Duration.h"
+ #include "Errors.h"
+ #include "NetworkAddress.h"
+ 

@@ -1,0 +1,63 @@
+From 7a9829a5cdd609b1c21812ebfd7f5c852d49e349 Mon Sep 17 00:00:00 2001
+From: sardi-dev <134648583+sardi-dev@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 16:49:14 +0000
+Subject: [PATCH 23/25] Let scripts read the units that hold threat on a unit
+
+ThreatManager::GetThreatenedByMeList returns the units that have the owner on
+their threat list, by guid, with the hostile reference of each, and
+HostileReference::GetOwner names the unit that holds the reference. Scripts
+and modules that handle adds (for example the pets of a boss) need them to
+find who is fighting a given player.
+
+Taken from the zones-dungeons branch (commit 87a504a9d4 by DigiD702).
+---
+ src/server/game/Combat/ThreatManager.cpp | 14 ++++++++++++++
+ src/server/game/Combat/ThreatManager.h   |  3 +++
+ 2 files changed, 17 insertions(+)
+
+diff --git a/src/server/game/Combat/ThreatManager.cpp b/src/server/game/Combat/ThreatManager.cpp
+index ecac53d6f6..f2b5258561 100644
+--- a/src/server/game/Combat/ThreatManager.cpp
++++ b/src/server/game/Combat/ThreatManager.cpp
+@@ -403,6 +403,20 @@ HostileReference* ThreatContainer::selectNextVictim(Creature* attacker, HostileR
+ 
+ ThreatManager::ThreatManager(Unit* owner) : iCurrentVictim(NULL), iOwner(owner), iUpdateTimer(THREAT_UPDATE_INTERVAL) { }
+ 
++Unit* HostileReference::GetOwner() const
++{
++    return GetSource()->GetOwner();
++}
++
++std::map<uint64, HostileReference*> ThreatManager::GetThreatenedByMeList() const
++{
++    std::map<uint64, HostileReference*> threatenedByMe;
++    for (HostileReference* ref = iOwner->getHostileRefManager().getFirst(); ref; ref = ref->next())
++        if (Unit* owner = ref->GetOwner())
++            threatenedByMe[owner->GetGUID()] = ref;
++    return threatenedByMe;
++}
++
+ //============================================================
+ 
+ void ThreatManager::clearReferences()
+diff --git a/src/server/game/Combat/ThreatManager.h b/src/server/game/Combat/ThreatManager.h
+index 78769c922c..5ae3fa9725 100644
+--- a/src/server/game/Combat/ThreatManager.h
++++ b/src/server/game/Combat/ThreatManager.h
+@@ -38,6 +38,8 @@ public:
+ 
+     float getThreat() const { return iThreat; }
+ 
++    Unit* GetOwner() const;
++
+     bool isOnline() const { return iOnline; }
+ 
+     // The Unit might be in water and the creature can not enter the water, but has range attack
+@@ -244,6 +246,7 @@ public:
+     // methods to access the lists from the outside to do some dirty manipulation (scriping and such)
+     // I hope they are used as little as possible.
+     ThreatContainer::StorageType const& getThreatList() const { return iThreatContainer.getThreatList(); }
++    std::map<uint64, HostileReference*> GetThreatenedByMeList() const;
+     ThreatContainer::StorageType const& getOfflineThreatList() const { return iThreatOfflineContainer.getThreatList(); }
+     ThreatContainer& getOnlineContainer() { return iThreatContainer; }
+     ThreatContainer& getOfflineContainer() { return iThreatOfflineContainer; }

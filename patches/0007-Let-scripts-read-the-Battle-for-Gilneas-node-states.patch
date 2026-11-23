@@ -1,0 +1,27 @@
+From 6e279b848e93c7f65f043aff457c3e27e2914707 Mon Sep 17 00:00:00 2001
+From: sardi-dev <134648583+sardi-dev@users.noreply.github.com>
+Date: Thu, 19 Nov 2026 02:53:44 +0000
+Subject: [PATCH 07/25] Let scripts read the Battle for Gilneas node states
+
+Arathi Basin already offers GetNodeStatus; Battle for Gilneas had no
+way for scripts to see who holds which node.
+---
+ src/server/game/Battlegrounds/Zones/BattlegroundBFG.h | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/src/server/game/Battlegrounds/Zones/BattlegroundBFG.h b/src/server/game/Battlegrounds/Zones/BattlegroundBFG.h
+index a63ca97284..c7a1724077 100644
+--- a/src/server/game/Battlegrounds/Zones/BattlegroundBFG.h
++++ b/src/server/game/Battlegrounds/Zones/BattlegroundBFG.h
+@@ -207,6 +207,11 @@ struct BattlegroundBFGScore : public BattlegroundScore
+ class BattlegroundBFG : public Battleground
+ {
+ public:
++    uint8 GetNodeStatus(uint8 node) const
++    {
++        return node < GILNEAS_BG_DYNAMIC_NODES_COUNT ? m_Nodes[node] : uint8(GILNEAS_BG_NODE_TYPE_NEUTRAL);
++    }
++
+     BattlegroundBFG();
+     ~BattlegroundBFG();
+ 

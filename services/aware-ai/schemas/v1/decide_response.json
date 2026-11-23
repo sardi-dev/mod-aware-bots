@@ -1,0 +1,104 @@
+{
+  "$defs": {
+    "Source": {
+      "enum": [
+        "jev",
+        "cache",
+        "rules_hint",
+        "error",
+        "fake",
+        "llm",
+        "rules"
+      ],
+      "title": "Source",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "choice": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Choice"
+    },
+    "confidence": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Confidence"
+    },
+    "cost_usd": {
+      "default": 0.0,
+      "title": "Cost Usd",
+      "type": "number"
+    },
+    "decision_id": {
+      "title": "Decision Id",
+      "type": "string"
+    },
+    "latency_ms": {
+      "default": 0,
+      "title": "Latency Ms",
+      "type": "integer"
+    },
+    "probabilities": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "title": "Probabilities",
+      "type": "object"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reason"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "source": {
+      "$ref": "#/$defs/Source"
+    },
+    "template": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Template"
+    }
+  },
+  "required": [
+    "decision_id",
+    "source"
+  ],
+  "title": "DecideResponse",
+  "type": "object"
+}

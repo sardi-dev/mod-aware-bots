@@ -1,0 +1,76 @@
+{
+  "$defs": {
+    "BudgetSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "daily_usd": {
+          "anyOf": [
+            {
+              "maximum": 10000,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Daily Usd"
+        },
+        "monthly_usd": {
+          "default": 20.0,
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Monthly Usd",
+          "type": "number"
+        }
+      },
+      "title": "BudgetSettings",
+      "type": "object"
+    },
+    "Features": {
+      "additionalProperties": false,
+      "properties": {
+        "chat": {
+          "default": false,
+          "title": "Chat",
+          "type": "boolean"
+        },
+        "personality": {
+          "default": true,
+          "title": "Personality",
+          "type": "boolean"
+        },
+        "pvp": {
+          "default": true,
+          "title": "Pvp",
+          "type": "boolean"
+        }
+      },
+      "title": "Features",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "budget": {
+      "$ref": "#/$defs/BudgetSettings"
+    },
+    "enabled": {
+      "default": false,
+      "title": "Enabled",
+      "type": "boolean"
+    },
+    "features": {
+      "$ref": "#/$defs/Features"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "title": "Settings",
+  "type": "object"
+}

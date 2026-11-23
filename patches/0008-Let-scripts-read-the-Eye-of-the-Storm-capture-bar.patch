@@ -1,0 +1,26 @@
+From 3d03767fa3eee44a0e08b0776ac7d67b320f331a Mon Sep 17 00:00:00 2001
+From: sardi-dev <134648583+sardi-dev@users.noreply.github.com>
+Date: Thu, 19 Nov 2026 04:01:58 +0000
+Subject: [PATCH 08/25] Let scripts read the Eye of the Storm capture bar
+
+Scripts could see who owns a point but not how far its capture bar
+had moved.
+---
+ src/server/game/Battlegrounds/Zones/BattlegroundEY.h | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/src/server/game/Battlegrounds/Zones/BattlegroundEY.h b/src/server/game/Battlegrounds/Zones/BattlegroundEY.h
+index dc0e912315..11669d1673 100644
+--- a/src/server/game/Battlegrounds/Zones/BattlegroundEY.h
++++ b/src/server/game/Battlegrounds/Zones/BattlegroundEY.h
+@@ -366,6 +366,10 @@ public:
+     {
+         return point < EY_POINTS_MAX ? m_PointState[point] : uint8(EY_POINT_NO_OWNER);
+     }
++    int32 GetPointBarStatus(uint8 point) const
++    {
++        return point < EY_POINTS_MAX ? m_PointBarStatus[point] : 0;
++    }
+ 
+ private:
+     void PostUpdateImpl(uint32 diff) OVERRIDE;

@@ -1,0 +1,30 @@
+
+#ifndef _PLAYERBOT_ASSASSINATIONROGUESTRATEGY_H
+#define _PLAYERBOT_ASSASSINATIONROGUESTRATEGY_H
+
+#include "MeleeCombatStrategy.h"
+
+class AssassinationRogueStrategy : public MeleeCombatStrategy
+{
+public:
+    AssassinationRogueStrategy(PlayerbotAI* ai);
+
+public:
+    virtual void InitTriggers(std::vector<TriggerNode*>& triggers) override;
+    // #593 (AC Ai/Class/*/*AiObjectContext.cpp): stored under AC's spec key so the co list matches AC; the fork key "melee" stays a registered alias.
+    virtual std::string const getName() override { return "assassin"; }
+    virtual NextAction** getDefaultActions() override;
+    uint32 GetType() const override { return MeleeCombatStrategy::GetType() | STRATEGY_TYPE_DPS; }
+};
+
+// Subtlety uses its own builders and finishers (rogue-subtlety sheet).
+class SubtletyRogueStrategy : public AssassinationRogueStrategy
+{
+public:
+    SubtletyRogueStrategy(PlayerbotAI* ai) : AssassinationRogueStrategy(ai) {}
+    void InitTriggers(std::vector<TriggerNode*>& triggers) override;
+    void InitMultipliers(std::vector<Multiplier*>& multipliers) override;
+    std::string const getName() override { return "subtlety"; }
+};
+
+#endif

@@ -1,0 +1,111 @@
+{
+  "$defs": {
+    "FightOutcome": {
+      "enum": [
+        "bot_won",
+        "human_won",
+        "disengaged",
+        "died_other",
+        "timeout"
+      ],
+      "title": "FightOutcome",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "anyOf": [
+    {
+      "properties": {
+        "event": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "event"
+      ]
+    },
+    {
+      "properties": {
+        "outcome": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome"
+      ]
+    }
+  ],
+  "properties": {
+    "bot_guid": {
+      "minimum": 0,
+      "title": "Bot Guid",
+      "type": "integer"
+    },
+    "detail": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Detail"
+    },
+    "event": {
+      "anyOf": [
+        {
+          "enum": [
+            "grouped",
+            "dungeon_done",
+            "boss_killed_together",
+            "wipe_together",
+            "duel_won",
+            "duel_lost",
+            "loot_ninja",
+            "loot_passed",
+            "helped",
+            "insulted",
+            "thanked"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Event"
+    },
+    "outcome": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FightOutcome"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "player_guid": {
+      "minimum": 0,
+      "title": "Player Guid",
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "bot_guid",
+    "player_guid"
+  ],
+  "title": "MemoryEventRequest",
+  "type": "object"
+}

@@ -1,0 +1,361 @@
+From 10f8d79784a08c8734eb4348d05b2ce229aaee5d Mon Sep 17 00:00:00 2001
+From: sardi-dev <134648583+sardi-dev@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 21:47:36 +0000
+Subject: [PATCH 11/25] Move taking mail money and items into Player
+
+HandleMailTakeMoney and HandleMailTakeItem did their work inside the
+handlers, tied to a mailbox and the packet results. Add Player::TakeMailMoney
+and TakeMailItem, which return a MailResponseResult, and DeleteEmptyMail
+to remove a mail once nothing is left in it. The handlers call them and
+send the same results as before. A mail item that is not loaded no longer
+reaches CanStoreItem as a null pointer.
+---
+ src/server/game/Entities/Player/Player.h      |   7 +
+ .../game/Entities/Player/PlayerMail.cpp       | 128 ++++++++++++++++++
+ src/server/game/Handlers/MailHandler.cpp      | 124 ++---------------
+ src/server/game/Mails/Mail.h                  |   1 +
+ 4 files changed, 145 insertions(+), 115 deletions(-)
+
+diff --git a/src/server/game/Entities/Player/Player.h b/src/server/game/Entities/Player/Player.h
+index 70c6d185ff..ed5415fea5 100644
+--- a/src/server/game/Entities/Player/Player.h
++++ b/src/server/game/Entities/Player/Player.h
+@@ -2021,6 +2021,13 @@ public:
+         return m_mailsLoaded;
+     }
+ 
++    // Take money or an item from a delivered mail and save it, without a mailbox. They send no packets,
++    // the caller reports the result. Must run on the world thread.
++    MailResponseResult TakeMailMoney(uint32 mailId, uint64 money, uint32& equipError);
++    MailResponseResult TakeMailItem(uint32 mailId, uint32 itemGuidLow, uint32& equipError, uint32& itemCount);
++    // Only a delivered mail with no money and no items left is deleted.
++    bool DeleteEmptyMail(uint32 mailId);
++
+     void RemoveMail(uint32 id);
+ 
+     void AddMail(Mail* mail)
+diff --git a/src/server/game/Entities/Player/PlayerMail.cpp b/src/server/game/Entities/Player/PlayerMail.cpp
+index df399647e0..974f5b8255 100644
+--- a/src/server/game/Entities/Player/PlayerMail.cpp
++++ b/src/server/game/Entities/Player/PlayerMail.cpp
+@@ -4,8 +4,13 @@
+ */
+ 
+ #include "Player.h"
++#include "DatabaseEnv.h"
+ #include "Item.h"
++#include "Language.h"
++#include "Log.h"
+ #include "Mail.h"
++#include "ObjectAccessor.h"
++#include "ObjectMgr.h"
+ #include "WorldPacket.h"
+ #include "WorldSession.h"
+ 
+@@ -22,6 +27,129 @@ void Player::RemoveMail(uint32 id)
+     }
+ }
+ 
++MailResponseResult Player::TakeMailMoney(uint32 mailId, uint64 money, uint32& equipError)
++{
++    Mail* m = GetMail(mailId);
++    if (!m || !m->IsDelivered() || (money > 0 && m->money != money))
++        return MAIL_ERR_INTERNAL_ERROR;
++
++    if (!ModifyMoney(m->money, false))
++    {
++        equipError = EQUIP_ERR_TOO_MUCH_GOLD;
++        return MAIL_ERR_EQUIP_ERROR;
++    }
++
++    m->money = 0;
++    m->state = MailState::MAIL_STATE_CHANGED;
++    m_mailsUpdated = true;
++
++    // save money and mail to prevent cheating
++    SQLTransaction trans = CharacterDatabase.BeginTransaction();
++    SaveGoldToDB(trans);
++    _SaveMail(trans);
++    CharacterDatabase.CommitTransaction(trans);
++
++    return MAIL_OK;
++}
++
++MailResponseResult Player::TakeMailItem(uint32 mailId, uint32 itemGuidLow, uint32& equipError, uint32& itemCount)
++{
++    Mail* m = GetMail(mailId);
++    if (!m || !m->IsDelivered())
++        return MAIL_ERR_INTERNAL_ERROR;
++
++    // prevent cheating with skip client money check
++    if (!HasEnoughMoney(uint64(m->COD)))
++        return MAIL_ERR_NOT_ENOUGH_MONEY;
++
++    Item* it = GetMItem(itemGuidLow);
++    if (!it)
++        return MAIL_ERR_INTERNAL_ERROR;
++
++    ItemPosCountVec dest;
++    uint8 msg = CanStoreItem(NULL_BAG, NULL_SLOT, dest, it, false);
++    if (msg != EQUIP_ERR_OK)
++    {
++        equipError = msg;
++        return MAIL_ERR_EQUIP_ERROR;
++    }
++
++    SQLTransaction trans = CharacterDatabase.BeginTransaction();
++    m->RemoveItem(itemGuidLow);
++    m->removedItems.push_back(itemGuidLow);
++
++    if (m->COD > 0)                                     //if there is COD, take COD money from player and send them to sender by mail
++    {
++        uint64 sender_guid = MAKE_NEW_GUID(m->sender, 0, HIGHGUID_PLAYER);
++        Player* receiver = ObjectAccessor::FindPlayer(sender_guid);
++
++        uint32 sender_accId = 0;
++
++        if (GetSession()->HasPermission(rbac::RBAC_PERM_LOG_GM_TRADE))
++        {
++            std::string sender_name;
++            if (receiver)
++            {
++                sender_accId = receiver->GetSession()->GetAccountId();
++                sender_name = receiver->GetName();
++            }
++            else
++            {
++                // can be calculated early
++                sender_accId = sObjectMgr->GetPlayerAccountIdByGUID(sender_guid);
++
++                if (!sObjectMgr->GetPlayerNameByGUID(sender_guid, sender_name))
++                    sender_name = sObjectMgr->GetSkyFireStringForDBCLocale(LANG_UNKNOWN);
++            }
++            sLog->outCommand(GetSession()->GetAccountId(), "GM %s (Account: %u) receiver mail item: %s (Entry: %u Count: %u) and send COD money: " UI64FMTD " to player: %s (Account: %u)",
++                GetName().c_str(), GetSession()->GetAccountId(), it->GetTemplate()->Name1.c_str(), it->GetEntry(), it->GetCount(), m->COD, sender_name.c_str(), sender_accId);
++        }
++        else if (!receiver)
++            sender_accId = sObjectMgr->GetPlayerAccountIdByGUID(sender_guid);
++
++        // check player existence
++        if (receiver || sender_accId)
++        {
++            MailDraft(m->subject, "")
++                .AddMoney(m->COD)
++                .SendMailTo(trans, MailReceiver(receiver, m->sender), MailSender(MAIL_NORMAL, m->receiver), MAIL_CHECK_MASK_COD_PAYMENT);
++        }
++
++        ModifyMoney(-int64(m->COD));
++    }
++    m->COD = 0;
++    m->state = MailState::MAIL_STATE_CHANGED;
++    m_mailsUpdated = true;
++    RemoveMItem(it->GetGUIDLow());
++
++    itemCount = it->GetCount();                         // save counts before store and possible merge with deleting
++    it->SetState(ITEM_UNCHANGED);                       // need to set this state, otherwise item cannot be removed later, if neccessary
++    MoveItemToInventory(dest, it, true);
++
++    SaveInventoryAndGoldToDB(trans);
++    _SaveMail(trans);
++    CharacterDatabase.CommitTransaction(trans);
++
++    return MAIL_OK;
++}
++
++bool Player::DeleteEmptyMail(uint32 mailId)
++{
++    Mail* m = GetMail(mailId);
++    if (!m || !m->IsDelivered() || m->HasItems() || m->money || m->COD)
++        return false;
++
++    m->state = MailState::MAIL_STATE_DELETED;
++    m_mailsUpdated = true;
++
++    // the mail is freed by the save
++    SQLTransaction trans = CharacterDatabase.BeginTransaction();
++    _SaveMail(trans);
++    CharacterDatabase.CommitTransaction(trans);
++
++    return true;
++}
++
+ void Player::SendMailResult(uint32 mailId, MailResponseType mailAction, MailResponseResult mailError, uint32 equipError, uint32 item_guid, uint32 item_count)
+ {
+     WorldPacket data(SMSG_SEND_MAIL_RESULT, 4 + 4 + 4 + 4 + 4 + 4);
+diff --git a/src/server/game/Handlers/MailHandler.cpp b/src/server/game/Handlers/MailHandler.cpp
+index 050f1a0d69..621e0a8d62 100644
+--- a/src/server/game/Handlers/MailHandler.cpp
++++ b/src/server/game/Handlers/MailHandler.cpp
+@@ -306,7 +306,7 @@ bool HasMailboxAccess(Player* player, ObjectGuid mailbox)
+ 
+ bool IsDeliveredMail(Mail const* mail)
+ {
+-    return mail && mail->state != MailState::MAIL_STATE_DELETED && mail->deliver_time <= time(NULL);
++    return mail && mail->IsDelivered();
+ }
+ 
+ Mail* GetDeliveredMailOrSendResult(Player* player, uint32 mailId, MailResponseType action)
+@@ -321,18 +321,6 @@ Mail* GetDeliveredMailOrSendResult(Player* player, uint32 mailId, MailResponseTy
+     return mail;
+ }
+ 
+-Mail* GetMoneyMailOrSendResult(Player* player, uint32 mailId, uint64 money)
+-{
+-    Mail* mail = player->GetMail(mailId);
+-    if (!IsDeliveredMail(mail) || (money > 0 && mail->money != money))
+-    {
+-        player->SendMailResult(mailId, MAIL_MONEY_TAKEN, MAIL_ERR_INTERNAL_ERROR);
+-        return NULL;
+-    }
+-
+-    return mail;
+-}
+-
+ Mail* GetTextMailOrSendResult(Player* player, uint32 mailId)
+ {
+     Mail* mail = player->GetMail(mailId);
+@@ -456,15 +444,6 @@ bool ValidateSendMailAttachments(Player* player, ObjectGuid* itemGuids, uint8 it
+ 
+     return true;
+ }
+-
+-bool ValidateMailCODPayment(Player* player, uint32 mailId, Mail const* mail)
+-{
+-    if (player->HasEnoughMoney(uint64(mail->COD)))
+-        return true;
+-
+-    player->SendMailResult(mailId, MAIL_ITEM_TAKEN, MAIL_ERR_NOT_ENOUGH_MONEY);
+-    return false;
+-}
+ }
+ 
+ void WorldSession::HandleSendMail(WorldPacket& recvData)
+@@ -768,80 +747,13 @@ void WorldSession::HandleMailTakeItem(WorldPacket& recvData)
+ 
+     Player* player = _player;
+ 
+-    Mail* m = GetDeliveredMailOrSendResult(player, mailId, MAIL_ITEM_TAKEN);
+-    if (!m)
+-        return;
+-
+-    // prevent cheating with skip client money check
+-    if (!ValidateMailCODPayment(player, mailId, m))
+-        return;
+-
+-    Item* it = player->GetMItem(itemId);
+-
+-    ItemPosCountVec dest;
+-    uint8 msg = _player->CanStoreItem(NULL_BAG, NULL_SLOT, dest, it, false);
+-    if (msg == EQUIP_ERR_OK)
+-    {
+-        SQLTransaction trans = CharacterDatabase.BeginTransaction();
+-        m->RemoveItem(itemId);
+-        m->removedItems.push_back(itemId);
+-
+-        if (m->COD > 0)                                     //if there is COD, take COD money from player and send them to sender by mail
+-        {
+-            uint64 sender_guid = MAKE_NEW_GUID(m->sender, 0, HIGHGUID_PLAYER);
+-            Player* receiver = ObjectAccessor::FindPlayer(sender_guid);
+-
+-            uint32 sender_accId = 0;
+-
+-            if (HasPermission(rbac::RBAC_PERM_LOG_GM_TRADE))
+-            {
+-                std::string sender_name;
+-                if (receiver)
+-                {
+-                    sender_accId = receiver->GetSession()->GetAccountId();
+-                    sender_name = receiver->GetName();
+-                }
+-                else
+-                {
+-                    // can be calculated early
+-                    sender_accId = sObjectMgr->GetPlayerAccountIdByGUID(sender_guid);
+-
+-                    if (!sObjectMgr->GetPlayerNameByGUID(sender_guid, sender_name))
+-                        sender_name = sObjectMgr->GetSkyFireStringForDBCLocale(LANG_UNKNOWN);
+-                }
+-                sLog->outCommand(GetAccountId(), "GM %s (Account: %u) receiver mail item: %s (Entry: %u Count: %u) and send COD money: " UI64FMTD " to player: %s (Account: %u)",
+-                    GetPlayerName().c_str(), GetAccountId(), it->GetTemplate()->Name1.c_str(), it->GetEntry(), it->GetCount(), m->COD, sender_name.c_str(), sender_accId);
+-            }
+-            else if (!receiver)
+-                sender_accId = sObjectMgr->GetPlayerAccountIdByGUID(sender_guid);
+-
+-            // check player existence
+-            if (receiver || sender_accId)
+-            {
+-                MailDraft(m->subject, "")
+-                    .AddMoney(m->COD)
+-                    .SendMailTo(trans, MailReceiver(receiver, m->sender), MailSender(MAIL_NORMAL, m->receiver), MAIL_CHECK_MASK_COD_PAYMENT);
+-            }
+-
+-            player->ModifyMoney(-int32(m->COD));
+-        }
+-        m->COD = 0;
+-        m->state = MailState::MAIL_STATE_CHANGED;
+-        player->m_mailsUpdated = true;
+-        player->RemoveMItem(it->GetGUIDLow());
+-
+-        uint32 count = it->GetCount();                      // save counts before store and possible merge with deleting
+-        it->SetState(ITEM_UNCHANGED);                       // need to set this state, otherwise item cannot be removed later, if neccessary
+-        player->MoveItemToInventory(dest, it, true);
+-
+-        player->SaveInventoryAndGoldToDB(trans);
+-        player->_SaveMail(trans);
+-        CharacterDatabase.CommitTransaction(trans);
+-
++    uint32 equipError = 0;
++    uint32 count = 0;
++    MailResponseResult result = player->TakeMailItem(mailId, itemId, equipError, count);
++    if (result == MAIL_OK)
+         player->SendMailResult(mailId, MAIL_ITEM_TAKEN, MAIL_OK, 0, itemId, count);
+-    }
+     else
+-        player->SendMailResult(mailId, MAIL_ITEM_TAKEN, MAIL_ERR_EQUIP_ERROR, msg);
++        player->SendMailResult(mailId, MAIL_ITEM_TAKEN, result, equipError);
+ }
+ 
+ void WorldSession::HandleMailTakeMoney(WorldPacket& recvData)
+@@ -856,27 +768,9 @@ void WorldSession::HandleMailTakeMoney(WorldPacket& recvData)
+ 
+     Player* player = _player;
+ 
+-    Mail* m = GetMoneyMailOrSendResult(player, mailId, money);
+-    if (!m)
+-        return;
+-
+-    if (!player->ModifyMoney(m->money, false))
+-    {
+-        player->SendMailResult(mailId, MAIL_MONEY_TAKEN, MAIL_ERR_EQUIP_ERROR, EQUIP_ERR_TOO_MUCH_GOLD);
+-        return;
+-    }
+-
+-    m->money = 0;
+-    m->state = MailState::MAIL_STATE_CHANGED;
+-    player->m_mailsUpdated = true;
+-
+-    player->SendMailResult(mailId, MAIL_MONEY_TAKEN, MAIL_OK);
+-
+-    // save money and mail to prevent cheating
+-    SQLTransaction trans = CharacterDatabase.BeginTransaction();
+-    player->SaveGoldToDB(trans);
+-    player->_SaveMail(trans);
+-    CharacterDatabase.CommitTransaction(trans);
++    uint32 equipError = 0;
++    MailResponseResult result = player->TakeMailMoney(mailId, money, equipError);
++    player->SendMailResult(mailId, MAIL_MONEY_TAKEN, result, equipError);
+ }
+ 
+ //called when player lists his received mails
+diff --git a/src/server/game/Mails/Mail.h b/src/server/game/Mails/Mail.h
+index 8065299c6f..6c181e4fd2 100644
+--- a/src/server/game/Mails/Mail.h
++++ b/src/server/game/Mails/Mail.h
+@@ -196,6 +196,7 @@ struct Mail
+     }
+ 
+     bool HasItems() const { return !items.empty(); }
++    bool IsDelivered() const { return state != MailState::MAIL_STATE_DELETED && deliver_time <= time(NULL); }
+ };
+ 
+ #endif

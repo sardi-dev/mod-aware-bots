@@ -1,0 +1,74 @@
+/*
+ * Copyright (C) 2016+ AzerothCore <www.azerothcore.org>, released under GNU GPL v2 license, you may redistribute it
+ * and/or modify it under version 2 of the License, or (at your option), any later version.
+ */
+
+#include "DruidShapeshiftActions.h"
+
+#include "Playerbots.h"
+
+bool CastBearFormAction::isPossible()
+{
+    return CastBuffSpellAction::isPossible() && !botAI->HasAura("dire bear form", GetTarget());
+}
+
+bool CastBearFormAction::isUseful()
+{
+    return CastBuffSpellAction::isUseful() && !botAI->HasAura("dire bear form", GetTarget());
+}
+
+NextAction** CastDireBearFormAction::getAlternatives()
+{
+    return NextAction::merge(NextAction::array(0, new NextAction("bear form"), nullptr),
+                             CastSpellAction::getAlternatives());
+}
+
+bool CastTravelFormAction::isUseful()
+{
+    bool firstmount = bot->getLevel() >= 20;
+
+    // useful if no mount or with wsg flag
+    return !bot->IsMounted() && (!firstmount || (bot->HasAura(23333) || bot->HasAura(23335) || bot->HasAura(34976))) &&
+           !botAI->HasAura("dash", bot);
+}
+
+bool CastCasterFormAction::isUseful()
+{
+    return botAI->HasAnyAuraOf(GetTarget(), "dire bear form", "bear form", "cat form", "travel form", "aquatic form",
+                               "flight form", "swift flight form", "moonkin form", nullptr) &&
+           // BT-067: leave a form only with mana for what comes next; it compared mana with the medium health value
+           AI_VALUE2(uint8, "mana", "self target") > sPlayerbotAIConfig->lowMana;
+}
+
+bool CastCasterFormAction::Execute(Event event)
+{
+    botAI->RemoveShapeshift();
+    return true;
+}
+
+bool CastCancelTreeFormAction::isUseful()
+{
+    return botAI->HasAura(33891, bot);
+}
+
+bool CastCancelTreeFormAction::Execute(Event event)
+{
+    // #384: the 5.4.8 aura (33891) is named "Incarnation: Tree of Life"; "tree of life" only matches the
+    // removed 3.3.5 spell ids.
+    botAI->RemoveAura("incarnation: tree of life");
+    return true;
+}
+
+bool CastTreeFormAction::isUseful()
+{
+    return GetTarget() && CastSpellAction::isUseful() && !botAI->HasAura(33891, bot);
+}
+
+// #363 (AC parity, Ai/Class/Druid/Action/DruidShapeshiftActions.cpp:47-53).
+bool CastCancelDruidAction::Execute(Event /*event*/)
+{
+    botAI->RemoveAura(auraName);
+    return true;
+}
+
+bool CastCancelDruidAction::isUseful() { return bot->HasAura(auraId); }

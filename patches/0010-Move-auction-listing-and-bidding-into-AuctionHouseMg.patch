@@ -1,0 +1,765 @@
+From 48539b679f0774ed3e3c7857fe0faecda4c03ae2 Mon Sep 17 00:00:00 2001
+From: sardi-dev <134648583+sardi-dev@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 21:47:34 +0000
+Subject: [PATCH 10/25] Move auction listing and bidding into AuctionHouseMgr
+
+The sell and bid handlers held all the logic, so nothing without a client
+could list an item or place a bid. Add ListItem for whole stacks and
+PlaceBid, both returning a result instead of sending packets, plus
+CreateAuction and CanAuctionItem shared with the handlers. Add
+GetListings to copy the facts of an auction house into a vector, and a
+small header with the duration, minimum bid and bid cost rules, covered
+by game_domain_tests. Packets the client sees stay the same.
+---
+ .../game/AuctionHouse/AuctionHouseMgr.cpp     | 206 ++++++++++++++++++
+ .../game/AuctionHouse/AuctionHouseMgr.h       |  67 ++++++
+ src/server/game/AuctionHouse/AuctionRules.h   |  49 +++++
+ .../game/Handlers/AuctionHouseHandler.cpp     | 191 +++-------------
+ src/tests/CMakeLists.txt                      |   1 +
+ src/tests/GameDomainTests.cpp                 |  48 ++++
+ 6 files changed, 405 insertions(+), 157 deletions(-)
+ create mode 100644 src/server/game/AuctionHouse/AuctionRules.h
+
+diff --git a/src/server/game/AuctionHouse/AuctionHouseMgr.cpp b/src/server/game/AuctionHouse/AuctionHouseMgr.cpp
+index d789db5127..a87f1d69a3 100644
+--- a/src/server/game/AuctionHouse/AuctionHouseMgr.cpp
++++ b/src/server/game/AuctionHouse/AuctionHouseMgr.cpp
+@@ -5,7 +5,9 @@
+ 
+ #include "AccountMgr.h"
+ #include "AuctionHouseMgr.h"
++#include "AuctionRules.h"
+ #include "Common.h"
++#include "Creature.h"
+ #include "DatabaseEnv.h"
+ #include "DBCStores.h"
+ #include "Item.h"
+@@ -346,6 +348,181 @@ bool AuctionHouseMgr::RemoveAItem(uint32 id)
+     return true;
+ }
+ 
++bool AuctionHouseMgr::CanAuctionItem(Item* item, uint32 count)
++{
++    return !GetAItem(item->GetGUIDLow()) && item->CanBeTraded() && !item->IsNotEmptyBag() &&
++        !(item->GetTemplate()->Flags & ITEM_PROTO_FLAG_CONJURED) && !item->GetUInt32Value(ITEM_FIELD_EXPIRATION) &&
++        item->GetCount() >= count;
++}
++
++AuctionEntry* AuctionHouseMgr::CreateAuction(Player* seller, Item* item, Creature* auctioneer, uint64 bid, uint64 buyout, uint32 auctionTime, uint64 deposit)
++{
++    AuctionEntry* auction = new AuctionEntry();
++
++    if (sWorld->GetBoolConfig(WorldBoolConfigs::CONFIG_ALLOW_TWO_SIDE_INTERACTION_AUCTION))
++        auction->auctioneer = 23442;     ///@TODO - HARDCODED DB GUID, BAD BAD BAD
++    else
++        auction->auctioneer = auctioneer->GetGUIDLow();
++
++    auction->Id = sObjectMgr->GenerateAuctionID();
++    auction->itemGUIDLow = item->GetGUIDLow();
++    auction->itemEntry = item->GetEntry();
++    auction->itemCount = item->GetCount();
++    auction->owner = seller->GetGUIDLow();
++    auction->startbid = bid;
++    auction->bidder = 0;
++    auction->bid = 0;
++    auction->buyout = buyout;
++    auction->expire_time = time(NULL) + auctionTime;
++    auction->deposit = deposit;
++    auction->auctionHouseEntry = GetAuctionHouseEntry(auctioneer->getFaction());
++
++    AddAItem(item);
++    GetAuctionsMap(auctioneer->getFaction())->AddAuction(auction);
++
++    return auction;
++}
++
++AuctionListResult AuctionHouseMgr::ListItem(Player* seller, Creature* auctioneer, uint64 itemGuid, uint32 count, uint64 bid, uint64 buyout, uint32 hours, AuctionListOutcome& outcome)
++{
++    if (!bid || bid > MAX_MONEY_AMOUNT || buyout > MAX_MONEY_AMOUNT)
++        return AuctionListResult::InvalidPrice;
++
++    // Rejected before the multiplication, a huge value could wrap around to a valid duration.
++    if (hours > 4 * MIN_AUCTION_TIME / HOUR)
++        return AuctionListResult::InvalidDuration;
++
++    uint32 duration = hours * HOUR;
++    if (!Skyfire::Auction::IsValidDuration(duration, MIN_AUCTION_TIME))
++        return AuctionListResult::InvalidDuration;
++
++    AuctionHouseEntry const* auctionHouseEntry = GetAuctionHouseEntry(auctioneer->getFaction());
++    if (!auctionHouseEntry)
++        return AuctionListResult::InvalidAuctioneer;
++
++    Item* item = seller->GetItemByGuid(itemGuid);
++    if (!item)
++        return AuctionListResult::ItemNotFound;
++
++    // Splitting a stack needs a clone of the item, only whole stacks are listed here.
++    if (!count || count != item->GetCount())
++        return AuctionListResult::InvalidCount;
++
++    if (!CanAuctionItem(item, count))
++        return AuctionListResult::ItemNotAllowed;
++
++    uint64 deposit = GetAuctionDeposit(auctionHouseEntry, duration, item, count);
++    if (!seller->HasEnoughMoney(deposit))
++        return AuctionListResult::NotEnoughMoney;
++
++    uint32 auctionTime = uint32(duration * sWorld->getRate(Rates::RATE_AUCTION_TIME));
++    AuctionEntry* auction = CreateAuction(seller, item, auctioneer, bid, buyout, auctionTime, deposit);
++
++    SF_LOG_DEBUG("auctionHouse", "Player %u lists item %u (count %u) as auction %u for " UI64FMTD " with buyout " UI64FMTD,
++        seller->GetGUIDLow(), item->GetEntry(), count, auction->Id, bid, buyout);
++
++    seller->MoveItemFromInventory(item->GetBagSlot(), item->GetSlot(), true);
++    seller->ModifyMoney(-int64(deposit));
++
++    SQLTransaction trans = CharacterDatabase.BeginTransaction();
++    item->DeleteFromInventoryDB(trans);
++    item->SaveToDB(trans);
++    auction->SaveToDB(trans);
++    seller->SaveInventoryAndGoldToDB(trans);
++    CharacterDatabase.CommitTransaction(trans);
++
++    seller->UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_CREATE_AUCTION, 1);
++
++    outcome.auctionId = auction->Id;
++    outcome.deposit = deposit;
++    return AuctionListResult::Ok;
++}
++
++AuctionBidResult AuctionHouseMgr::PlaceBid(Player* bidder, AuctionHouseObject* auctionHouse, uint32 auctionId, uint64 price, AuctionBidOutcome& outcome)
++{
++    outcome.paid = 0;
++    outcome.boughtOut = false;
++
++    AuctionEntry* auction = auctionHouse->GetAuction(auctionId);
++    if (!auction)
++        return AuctionBidResult::NotFound;
++
++    outcome.auction = *auction;
++
++    if (auction->owner == bidder->GetGUIDLow())
++        return AuctionBidResult::OwnAuction;
++
++    switch (Skyfire::Auction::CheckBid(price, auction->bid, auction->startbid, auction->buyout, auction->GetAuctionOutBid()))
++    {
++        case Skyfire::Auction::BidCheck::Ignored:
++            return AuctionBidResult::InvalidPrice;
++        case Skyfire::Auction::BidCheck::TooLow:
++            return AuctionBidResult::BidTooLow;
++        default:
++            break;
++    }
++
++    // The whole price has to be there even for the current bidder, who only pays the difference.
++    if (!bidder->HasEnoughMoney(price))
++        return AuctionBidResult::NotEnoughMoney;
++
++    bool const isBuyout = auction->buyout && price >= auction->buyout;
++    bool const isCurrentBidder = auction->bidder == bidder->GetGUIDLow();
++
++    SQLTransaction trans = CharacterDatabase.BeginTransaction();
++
++    outcome.paid = Skyfire::Auction::GetBidCost(price, auction->bid, auction->buyout, isCurrentBidder);
++
++    if (!isBuyout)
++    {
++        // mail to last bidder and return money
++        if (auction->bidder && !isCurrentBidder)
++            SendAuctionOutbiddedMail(auction, price, bidder, trans);
++
++        bidder->ModifyMoney(-int64(outcome.paid));
++
++        auction->bidder = bidder->GetGUIDLow();
++        auction->bid = price;
++        bidder->UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_HIGHEST_AUCTION_BID, price);
++
++        PreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_UPD_AUCTION_BID);
++        stmt->setUInt32(0, auction->bidder);
++        stmt->setUInt64(1, auction->bid);
++        stmt->setUInt32(2, auction->Id);
++        trans->Append(stmt);
++
++        outcome.auction = *auction;
++    }
++    else
++    {
++        bidder->ModifyMoney(-int64(outcome.paid));
++        if (auction->bidder && !isCurrentBidder)            //buyout for bidded auction ..
++            SendAuctionOutbiddedMail(auction, auction->buyout, bidder, trans);
++
++        auction->bidder = bidder->GetGUIDLow();
++        auction->bid = auction->buyout;
++        bidder->UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_HIGHEST_AUCTION_BID, auction->buyout);
++
++        //- Mails must be under transaction control too to prevent data loss
++        SendAuctionSalePendingMail(auction, trans);
++        SendAuctionSuccessfulMail(auction, trans);
++        SendAuctionWonMail(auction, trans);
++
++        auction->DeleteFromDB(trans);
++
++        outcome.auction = *auction;
++        outcome.boughtOut = true;
++
++        RemoveAItem(auction->itemGUIDLow);
++        auctionHouse->RemoveAuction(auction, outcome.auction.itemEntry);
++    }
++
++    bidder->SaveInventoryAndGoldToDB(trans);
++    CharacterDatabase.CommitTransaction(trans);
++
++    return AuctionBidResult::Ok;
++}
++
+ void AuctionHouseMgr::Update()
+ {
+     mHordeAuctions.Update();
+@@ -467,6 +644,35 @@ void AuctionHouseObject::Update()
+     } while (result->NextRow());
+ }
+ 
++void AuctionHouseObject::GetListings(std::vector<AuctionListing>& listings, uint32 afterId, uint32 limit) const
++{
++    uint32 added = 0;
++    for (AuctionEntryMap::const_iterator itr = AuctionsMap.upper_bound(afterId); itr != AuctionsMap.end(); ++itr)
++    {
++        if (limit && added >= limit)
++            break;
++
++        AuctionEntry const* auction = itr->second;
++        Item* item = sAuctionMgr->GetAItem(auction->itemGUIDLow);
++        if (!item)
++            continue;
++
++        AuctionListing listing;
++        listing.id = auction->Id;
++        listing.itemEntry = auction->itemEntry;
++        listing.randomPropertyId = item->GetItemRandomPropertyId();
++        listing.itemCount = auction->itemCount;
++        listing.startBid = auction->startbid;
++        listing.bid = auction->bid;
++        listing.buyout = auction->buyout;
++        listing.owner = auction->owner;
++        listing.bidder = auction->bidder;
++        listing.expireTime = auction->expire_time;
++        listings.push_back(listing);
++        ++added;
++    }
++}
++
+ void AuctionHouseObject::BuildListBidderItems(WorldPacket& data, Player* player, uint32& count, uint32& totalcount)
+ {
+     for (AuctionEntryMap::const_iterator itr = AuctionsMap.begin(); itr != AuctionsMap.end(); ++itr)
+diff --git a/src/server/game/AuctionHouse/AuctionHouseMgr.h b/src/server/game/AuctionHouse/AuctionHouseMgr.h
+index 809c764a4f..02d42e5249 100644
+--- a/src/server/game/AuctionHouse/AuctionHouseMgr.h
++++ b/src/server/game/AuctionHouse/AuctionHouseMgr.h
+@@ -11,6 +11,9 @@
+ #include "DBCStructure.h"
+ #include "Platform/Singleton.h"
+ 
++#include <vector>
++
++class Creature;
+ class Item;
+ class Player;
+ class WorldPacket;
+@@ -50,6 +53,28 @@ enum class MailAuctionAnswer
+     AUCTION_SALE_PENDING = 6
+ };
+ 
++enum class AuctionListResult
++{
++    Ok,
++    InvalidPrice,
++    InvalidDuration,
++    InvalidAuctioneer,
++    ItemNotFound,
++    ItemNotAllowed,                                         // not tradable, already in an auction, non-empty bag, conjured or expiring
++    InvalidCount,                                           // zero or not the whole stack
++    NotEnoughMoney
++};
++
++enum class AuctionBidResult
++{
++    Ok,
++    NotFound,
++    OwnAuction,
++    InvalidPrice,                                           // not above the current bid or below the start bid
++    BidTooLow,                                              // below the next minimum bid
++    NotEnoughMoney
++};
++
+ struct AuctionEntry
+ {
+     uint32 Id;
+@@ -81,6 +106,34 @@ struct AuctionEntry
+     static std::string BuildAuctionMailBody(uint32 lowGuid, uint64 bid, uint64 buyout, uint64 deposit, uint64 cut);
+ };
+ 
++struct AuctionListOutcome
++{
++    uint32 auctionId;
++    uint64 deposit;
++};
++
++struct AuctionBidOutcome
++{
++    uint64 paid;                                            // copper taken from the bidder, only the difference for the current bidder
++    bool boughtOut;
++    AuctionEntry auction;                                   // copy of the entry, a buyout frees the original
++};
++
++// A copy of the facts of one auction, safe to keep after the auction is gone.
++struct AuctionListing
++{
++    uint32 id;
++    uint32 itemEntry;
++    int32 randomPropertyId;
++    uint32 itemCount;
++    uint64 startBid;
++    uint64 bid;
++    uint64 buyout;
++    uint32 owner;
++    uint32 bidder;
++    time_t expireTime;
++};
++
+ //this class is used as auctionhouse instance
+ class AuctionHouseObject
+ {
+@@ -110,6 +163,9 @@ public:
+ 
+     void Update();
+ 
++    // Appends up to limit listings (0 = all) with an id above afterId, in id order. Must run on the world thread.
++    void GetListings(std::vector<AuctionListing>& listings, uint32 afterId = 0, uint32 limit = 0) const;
++
+     void BuildListBidderItems(WorldPacket& data, Player* player, uint32& count, uint32& totalcount);
+     void BuildListOwnerItems(WorldPacket& data, Player* player, uint32& count, uint32& totalcount);
+     void BuildListAuctionItems(WorldPacket& data, Player* player,
+@@ -155,6 +211,17 @@ public:
+     static uint64 GetAuctionDeposit(AuctionHouseEntry const* entry, uint32 time, Item* pItem, uint32 count);
+     static AuctionHouseEntry const* GetAuctionHouseEntry(uint32 factionTemplateId);
+ 
++    // Operations shared by the client handlers and callers that have no client, such as bots. They send no
++    // packets and must run on the world thread. The caller checks that the player can reach the auctioneer.
++    bool CanAuctionItem(Item* item, uint32 count);
++    AuctionEntry* CreateAuction(Player* seller, Item* item, Creature* auctioneer, uint64 bid, uint64 buyout, uint32 auctionTime, uint64 deposit);
++
++    // Lists a whole stack for hours (12, 24 or 48). Takes the deposit and saves it together with the auction.
++    AuctionListResult ListItem(Player* seller, Creature* auctioneer, uint64 itemGuid, uint32 count, uint64 bid, uint64 buyout, uint32 hours, AuctionListOutcome& outcome);
++
++    // Bids price, or buys out when price reaches the buyout. The auction may be freed, so do not keep pointers to it.
++    AuctionBidResult PlaceBid(Player* bidder, AuctionHouseObject* auctionHouse, uint32 auctionId, uint64 price, AuctionBidOutcome& outcome);
++
+ public:
+     // Used primarily at server start to avoid loading a list of expired auctions
+     void DeleteExpiredAuctionsAtStartup();
+diff --git a/src/server/game/AuctionHouse/AuctionRules.h b/src/server/game/AuctionHouse/AuctionRules.h
+new file mode 100644
+index 0000000000..442f528f63
+--- /dev/null
++++ b/src/server/game/AuctionHouse/AuctionRules.h
+@@ -0,0 +1,49 @@
++/*
++* This file is part of Project SkyFire https://www.projectskyfire.org.
++* See LICENSE.md file for Copyright information
++*/
++
++#ifndef SKYFIRE_AUCTION_RULES_H
++#define SKYFIRE_AUCTION_RULES_H
++
++#include "Define.h"
++
++namespace Skyfire
++{
++    namespace Auction
++    {
++        enum class BidCheck
++        {
++            Ok,
++            Ignored,                                        // a client never sends this, no answer is given
++            TooLow                                          // below the next minimum bid
++        };
++
++        // Listings last once, twice or four times the minimum time.
++        inline bool IsValidDuration(uint32 duration, uint32 minDuration)
++        {
++            return duration == minDuration || duration == 2 * minDuration || duration == 4 * minDuration;
++        }
++
++        // A price equal to the buyout is a buyout, so it does not need to clear the minimum increment.
++        inline BidCheck CheckBid(uint64 price, uint64 currentBid, uint64 startBid, uint64 buyout, uint64 minIncrement)
++        {
++            if (price <= currentBid || price < startBid)
++                return BidCheck::Ignored;
++
++            if ((price < buyout || buyout == 0) && price < currentBid + minIncrement)
++                return BidCheck::TooLow;
++
++            return BidCheck::Ok;
++        }
++
++        // The current highest bidder only pays the difference, everyone else pays the full amount.
++        inline uint64 GetBidCost(uint64 price, uint64 currentBid, uint64 buyout, bool isCurrentBidder)
++        {
++            uint64 amount = (buyout && price >= buyout) ? buyout : price;
++            return isCurrentBidder ? amount - currentBid : amount;
++        }
++    } // namespace Skyfire::Auction
++} // namespace Skyfire
++
++#endif
+diff --git a/src/server/game/Handlers/AuctionHouseHandler.cpp b/src/server/game/Handlers/AuctionHouseHandler.cpp
+index b238c25c61..2f1a0542bb 100644
+--- a/src/server/game/Handlers/AuctionHouseHandler.cpp
++++ b/src/server/game/Handlers/AuctionHouseHandler.cpp
+@@ -11,6 +11,7 @@
+ 
+ #include "AccountMgr.h"
+ #include "AuctionHouseMgr.h"
++#include "AuctionRules.h"
+ #include "Language.h"
+ #include "Log.h"
+ #include "Opcodes.h"
+@@ -287,15 +288,8 @@ void WorldSession::HandleAuctionSellItem(WorldPacket& recvData)
+ 
+     etime *= MINUTE;
+ 
+-    switch (etime)
+-    {
+-        case 1 * MIN_AUCTION_TIME:
+-        case 2 * MIN_AUCTION_TIME:
+-        case 4 * MIN_AUCTION_TIME:
+-            break;
+-        default:
+-            return;
+-    }
++    if (!Skyfire::Auction::IsValidDuration(etime, MIN_AUCTION_TIME))
++        return;
+ 
+     if (GetPlayer()->HasUnitState(UNIT_STATE_DIED))
+         GetPlayer()->RemoveAurasByType(SPELL_AURA_FEIGN_DEATH);
+@@ -314,9 +308,7 @@ void WorldSession::HandleAuctionSellItem(WorldPacket& recvData)
+             return;
+         }
+ 
+-        if (sAuctionMgr->GetAItem(item->GetGUIDLow()) || !item->CanBeTraded() || item->IsNotEmptyBag() ||
+-            item->GetTemplate()->Flags & ITEM_PROTO_FLAG_CONJURED || item->GetUInt32Value(ITEM_FIELD_EXPIRATION) ||
+-            item->GetCount() < count[i])
++        if (!sAuctionMgr->CanAuctionItem(item, count[i]))
+         {
+             SendAuctionCommandResult(NULL, AUCTION_SELL_ITEM, ERR_AUCTION_DATABASE_ERROR);
+             return;
+@@ -355,13 +347,6 @@ void WorldSession::HandleAuctionSellItem(WorldPacket& recvData)
+         return;
+     }
+ 
+-    AuctionEntry* AH = new AuctionEntry();
+-
+-    if (sWorld->GetBoolConfig(WorldBoolConfigs::CONFIG_ALLOW_TWO_SIDE_INTERACTION_AUCTION))
+-        AH->auctioneer = 23442;     ///@TODO - HARDCODED DB GUID, BAD BAD BAD
+-    else
+-        AH->auctioneer = GUID_LOPART(auctioneer);
+-
+     // Required stack size of auction matches to current item stack size, just move item to auctionhouse
+     if (itemCount == 1 && item->GetCount() == count[0])
+     {
+@@ -371,39 +356,21 @@ void WorldSession::HandleAuctionSellItem(WorldPacket& recvData)
+                 GetPlayerName().c_str(), GetAccountId(), item->GetTemplate()->Name1.c_str(), item->GetEntry(), item->GetCount());
+         }
+ 
+-        AH->Id = sObjectMgr->GenerateAuctionID();
+-        AH->itemGUIDLow = item->GetGUIDLow();
+-        AH->itemEntry = item->GetEntry();
+-        AH->itemCount = item->GetCount();
+-        AH->owner = _player->GetGUIDLow();
+-        AH->startbid = bid;
+-        AH->bidder = 0;
+-        AH->bid = 0;
+-        AH->buyout = buyout;
+-        AH->expire_time = time(NULL) + auctionTime;
+-        AH->deposit = deposit;
+-        AH->auctionHouseEntry = auctionHouseEntry;
++        AuctionListOutcome listed;
++        if (sAuctionMgr->ListItem(_player, creature, item->GetGUID(), count[0], bid, buyout, etime / HOUR, listed) != AuctionListResult::Ok)
++        {
++            SendAuctionCommandResult(NULL, AUCTION_SELL_ITEM, ERR_AUCTION_DATABASE_ERROR);
++            return;
++        }
++
++        AuctionEntry* AH = auctionHouse->GetAuction(listed.auctionId);
+ 
+         SF_LOG_INFO("network", "CMSG_AUCTION_SELL_ITEM: Player %s (guid %d) is selling item %s entry %u (guid %d) "
+             "to auctioneer %u with count %u with initial bid " UI64FMTD " with buyout " UI64FMTD " and with time %u (in sec) in auctionhouse %u",
+             _player->GetName().c_str(), _player->GetGUIDLow(), item->GetTemplate()->Name1.c_str(), item->GetEntry(), item->GetGUIDLow(),
+             AH->auctioneer, item->GetCount(), bid, buyout, auctionTime, AH->GetHouseId());
+-        sAuctionMgr->AddAItem(item);
+-        auctionHouse->AddAuction(AH);
+-
+-        _player->MoveItemFromInventory(item->GetBagSlot(), item->GetSlot(), true);
+-        _player->ModifyMoney(-int64(deposit));
+-
+-        SQLTransaction trans = CharacterDatabase.BeginTransaction();
+-        item->DeleteFromInventoryDB(trans);
+-        item->SaveToDB(trans);
+-        AH->SaveToDB(trans);
+-        _player->SaveInventoryAndGoldToDB(trans);
+-        CharacterDatabase.CommitTransaction(trans);
+ 
+         SendAuctionCommandResult(AH, AUCTION_SELL_ITEM, ERR_AUCTION_OK);
+-
+-        GetPlayer()->UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_CREATE_AUCTION, 1);
+     }
+     else // Required stack size of auction does not match to current item stack size, clone item and set correct stack size
+     {
+@@ -412,7 +379,6 @@ void WorldSession::HandleAuctionSellItem(WorldPacket& recvData)
+         {
+             SF_LOG_ERROR("network", "CMSG_AUCTION_SELL_ITEM: Could not create clone of item %u", item->GetEntry());
+             SendAuctionCommandResult(NULL, AUCTION_SELL_ITEM, ERR_AUCTION_DATABASE_ERROR);
+-            delete AH;
+             return;
+         }
+ 
+@@ -422,25 +388,12 @@ void WorldSession::HandleAuctionSellItem(WorldPacket& recvData)
+                 GetPlayerName().c_str(), GetAccountId(), newItem->GetTemplate()->Name1.c_str(), newItem->GetEntry(), newItem->GetCount());
+         }
+ 
+-        AH->Id = sObjectMgr->GenerateAuctionID();
+-        AH->itemGUIDLow = newItem->GetGUIDLow();
+-        AH->itemEntry = newItem->GetEntry();
+-        AH->itemCount = newItem->GetCount();
+-        AH->owner = _player->GetGUIDLow();
+-        AH->startbid = bid;
+-        AH->bidder = 0;
+-        AH->bid = 0;
+-        AH->buyout = buyout;
+-        AH->expire_time = time(NULL) + auctionTime;
+-        AH->deposit = deposit;
+-        AH->auctionHouseEntry = auctionHouseEntry;
++        AuctionEntry* AH = sAuctionMgr->CreateAuction(_player, newItem, creature, bid, buyout, auctionTime, deposit);
+ 
+         SF_LOG_INFO("network", "CMSG_AUCTION_SELL_ITEM: Player %s (guid %d) is selling item %s entry %u (guid %d) to "
+             "auctioneer %u with count %u with initial bid " UI64FMTD " with buyout " UI64FMTD " and with time %u (in sec) in auctionhouse %u",
+             _player->GetName().c_str(), _player->GetGUIDLow(), newItem->GetTemplate()->Name1.c_str(), newItem->GetEntry(),
+             newItem->GetGUIDLow(), AH->auctioneer, newItem->GetCount(), bid, buyout, auctionTime, AH->GetHouseId());
+-        sAuctionMgr->AddAItem(newItem);
+-        auctionHouse->AddAuction(AH);
+ 
+         for (uint32 j = 0; j < itemCount; ++j)
+         {
+@@ -514,105 +467,29 @@ void WorldSession::HandleAuctionPlaceBid(WorldPacket& recvData)
+ 
+     AuctionHouseObject* auctionHouse = sAuctionMgr->GetAuctionsMap(creature->getFaction());
+ 
+-    AuctionEntry* auction = auctionHouse->GetAuction(auctionId);
+-    Player* player = GetPlayer();
+-
+-    if (!auction || auction->owner == player->GetGUIDLow())
+-    {
+-        //you cannot bid your own auction:
+-        SendAuctionCommandResult(NULL, AUCTION_PLACE_BID, ERR_AUCTION_BID_OWN);
+-        return;
+-    }
+-
+-    // impossible have online own another character (use this for speedup check in case online owner)
+-    /*Player* auction_owner = ObjectAccessor::FindPlayer(MAKE_NEW_GUID(auction->owner, 0, HIGHGUID_PLAYER));
+-    if (!auction_owner && sObjectMgr->GetPlayerAccountIdByGUID(MAKE_NEW_GUID(auction->owner, 0, HIGHGUID_PLAYER)) == player->GetSession()->GetAccountId())
+-    {
+-        //you cannot bid your another character auction:
+-        SendAuctionCommandResult(NULL, AUCTION_PLACE_BID, ERR_AUCTION_BID_OWN);
+-        return;
+-    }*/
+-
+-    // cheating
+-    if (price <= auction->bid || price < auction->startbid)
+-        return;
+-
+-    // price too low for next bid if not buyout
+-    if ((price < auction->buyout || auction->buyout == 0) &&
+-        price < auction->bid + auction->GetAuctionOutBid())
++    AuctionBidOutcome outcome = { };
++    switch (sAuctionMgr->PlaceBid(GetPlayer(), auctionHouse, auctionId, price, outcome))
+     {
+-        // client already test it but just in case ...
+-        SendAuctionCommandResult(auction, AUCTION_PLACE_BID, ERR_AUCTION_HIGHER_BID);
+-        return;
+-    }
+-
+-    if (!player->HasEnoughMoney(price))
+-    {
+-        // client already test it but just in case ...
+-        SendAuctionCommandResult(auction, AUCTION_PLACE_BID, ERR_AUCTION_NOT_ENOUGHT_MONEY);
+-        return;
+-    }
+-
+-    SQLTransaction trans = CharacterDatabase.BeginTransaction();
+-
+-    if (price < auction->buyout || auction->buyout == 0)
+-    {
+-        if (auction->bidder > 0)
+-        {
+-            if (auction->bidder == player->GetGUIDLow())
+-                player->ModifyMoney(-int64(price - auction->bid));
+-            else
+-            {
+-                // mail to last bidder and return money
+-                sAuctionMgr->SendAuctionOutbiddedMail(auction, price, GetPlayer(), trans);
+-                player->ModifyMoney(-int64(price));
+-            }
+-        }
+-        else
+-            player->ModifyMoney(-int64(price));
+-
+-        auction->bidder = player->GetGUIDLow();
+-        auction->bid = price;
+-        GetPlayer()->UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_HIGHEST_AUCTION_BID, price);
+-
+-        PreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_UPD_AUCTION_BID);
+-        stmt->setUInt32(0, auction->bidder);
+-        stmt->setUInt64(1, auction->bid);
+-        stmt->setUInt32(2, auction->Id);
+-        trans->Append(stmt);
+-
+-        SendAuctionCommandResult(auction, AUCTION_PLACE_BID, ERR_AUCTION_OK);
+-    }
+-    else
+-    {
+-        //buyout:
+-        if (player->GetGUIDLow() == auction->bidder)
+-            player->ModifyMoney(-int64(auction->buyout - auction->bid));
+-        else
+-        {
+-            player->ModifyMoney(-int64(auction->buyout));
+-            if (auction->bidder)                          //buyout for bidded auction ..
+-                sAuctionMgr->SendAuctionOutbiddedMail(auction, auction->buyout, GetPlayer(), trans);
+-        }
+-        auction->bidder = player->GetGUIDLow();
+-        auction->bid = auction->buyout;
+-        GetPlayer()->UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_HIGHEST_AUCTION_BID, auction->buyout);
+-
+-        //- Mails must be under transaction control too to prevent data loss
+-        sAuctionMgr->SendAuctionSalePendingMail(auction, trans);
+-        sAuctionMgr->SendAuctionSuccessfulMail(auction, trans);
+-        sAuctionMgr->SendAuctionWonMail(auction, trans);
+-
+-        SendAuctionCommandResult(auction, AUCTION_PLACE_BID, ERR_AUCTION_OK);
+-
+-        auction->DeleteFromDB(trans);
+-
+-        uint32 itemEntry = auction->itemEntry;
+-        sAuctionMgr->RemoveAItem(auction->itemGUIDLow);
+-        auctionHouse->RemoveAuction(auction, itemEntry);
++        case AuctionBidResult::NotFound:
++        case AuctionBidResult::OwnAuction:
++            //you cannot bid your own auction:
++            SendAuctionCommandResult(NULL, AUCTION_PLACE_BID, ERR_AUCTION_BID_OWN);
++            break;
++        case AuctionBidResult::InvalidPrice:
++            // cheating
++            break;
++        case AuctionBidResult::BidTooLow:
++            // client already test it but just in case ...
++            SendAuctionCommandResult(&outcome.auction, AUCTION_PLACE_BID, ERR_AUCTION_HIGHER_BID);
++            break;
++        case AuctionBidResult::NotEnoughMoney:
++            // client already test it but just in case ...
++            SendAuctionCommandResult(&outcome.auction, AUCTION_PLACE_BID, ERR_AUCTION_NOT_ENOUGHT_MONEY);
++            break;
++        case AuctionBidResult::Ok:
++            SendAuctionCommandResult(&outcome.auction, AUCTION_PLACE_BID, ERR_AUCTION_OK);
++            break;
+     }
+-    player->SaveInventoryAndGoldToDB(trans);
+-    CharacterDatabase.CommitTransaction(trans);
+ }
+ 
+ //this void is called when auction_owner cancels his auction
+diff --git a/src/tests/CMakeLists.txt b/src/tests/CMakeLists.txt
+index 86c44d616b..da4c9e49eb 100644
+--- a/src/tests/CMakeLists.txt
++++ b/src/tests/CMakeLists.txt
+@@ -843,6 +843,7 @@ set(SKYFIRE_GAME_TEST_INCLUDE_DIRS
+   ${CMAKE_SOURCE_DIR}/src/server/game/AI/CoreAI
+   ${CMAKE_SOURCE_DIR}/src/server/game/AI/ScriptedAI
+   ${CMAKE_SOURCE_DIR}/src/server/game/AI/SmartScripts
++  ${CMAKE_SOURCE_DIR}/src/server/game/AuctionHouse
+   ${CMAKE_SOURCE_DIR}/src/server/game/BattlePet
+   ${CMAKE_SOURCE_DIR}/src/server/game/Chat
+   ${CMAKE_SOURCE_DIR}/src/server/game/Combat
+diff --git a/src/tests/GameDomainTests.cpp b/src/tests/GameDomainTests.cpp
+index 20f56edd1b..4d3ae738fe 100644
+--- a/src/tests/GameDomainTests.cpp
++++ b/src/tests/GameDomainTests.cpp
+@@ -7,6 +7,7 @@
+ #include "CombatPackets.h"
+ #include "CurrencyFormulas.h"
+ #include "AreaTableUtils.h"
++#include "AuctionRules.h"
+ #include "AchievementCriteriaPackets.h"
+ #include "DBCEnums.h"
+ #include "GridDefines.h"
+@@ -55,6 +56,52 @@ namespace
+         return Expect(std::fabs(actual - expected) <= epsilon, message);
+     }
+ 
++    bool TestAuctionRules()
++    {
++        using Skyfire::Auction::BidCheck;
++
++        uint32 const minTime = 12 * 3600;
++        bool passed = true;
++
++        passed &= Expect(Skyfire::Auction::IsValidDuration(minTime, minTime) &&
++            Skyfire::Auction::IsValidDuration(2 * minTime, minTime) &&
++            Skyfire::Auction::IsValidDuration(4 * minTime, minTime),
++            "Auction durations of 12, 24 and 48 hours should be accepted");
++        passed &= Expect(!Skyfire::Auction::IsValidDuration(0, minTime) &&
++            !Skyfire::Auction::IsValidDuration(3 * minTime, minTime) &&
++            !Skyfire::Auction::IsValidDuration(8 * minTime, minTime),
++            "Other auction durations should be rejected");
++
++        // current bid 1000 with a 5 percent minimum increment of 50, start bid 500, buyout 5000
++        passed &= Expect(Skyfire::Auction::CheckBid(1000, 1000, 500, 5000, 50) == BidCheck::Ignored,
++            "A bid equal to the current bid should be ignored");
++        passed &= Expect(Skyfire::Auction::CheckBid(400, 0, 500, 5000, 1) == BidCheck::Ignored,
++            "A first bid below the start bid should be ignored");
++        passed &= Expect(Skyfire::Auction::CheckBid(1049, 1000, 500, 5000, 50) == BidCheck::TooLow,
++            "A bid below the minimum increment should be too low");
++        passed &= Expect(Skyfire::Auction::CheckBid(1050, 1000, 500, 5000, 50) == BidCheck::Ok,
++            "A bid at the minimum increment should be accepted");
++        passed &= Expect(Skyfire::Auction::CheckBid(500, 0, 500, 5000, 1) == BidCheck::Ok,
++            "A first bid at the start bid should be accepted");
++        passed &= Expect(Skyfire::Auction::CheckBid(5000, 4990, 500, 5000, 250) == BidCheck::Ok,
++            "A buyout should not need to clear the minimum increment");
++        passed &= Expect(Skyfire::Auction::CheckBid(1010, 1000, 500, 0, 50) == BidCheck::TooLow,
++            "Without a buyout every bid should clear the minimum increment");
++
++        passed &= Expect(Skyfire::Auction::GetBidCost(1200, 1000, 5000, false) == 1200,
++            "A new bidder should pay the full bid");
++        passed &= Expect(Skyfire::Auction::GetBidCost(1200, 1000, 5000, true) == 200,
++            "The current bidder should pay only the difference");
++        passed &= Expect(Skyfire::Auction::GetBidCost(5000, 1000, 5000, false) == 5000,
++            "A new buyer should pay the buyout");
++        passed &= Expect(Skyfire::Auction::GetBidCost(5000, 1000, 5000, true) == 4000,
++            "The current bidder buying out should pay the buyout minus the bid");
++        passed &= Expect(Skyfire::Auction::GetBidCost(9000, 1000, 5000, false) == 5000,
++            "A price above the buyout should only cost the buyout");
++
++        return passed;
++    }
++
+     bool TestCurrencyFormulaBoundaries()
+     {
+         bool passed = true;
+@@ -1829,6 +1876,7 @@ int main()
+     bool passed = true;
+ 
+     passed &= TestCurrencyFormulaBoundaries();
++    passed &= TestAuctionRules();
+     passed &= TestWorldPacketContainerBehavior();
+     passed &= TestPreResurrectPacketUsesPlayerGuid();
+     passed &= TestCancelCombatPacketIsEmpty();

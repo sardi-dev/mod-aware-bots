@@ -1,0 +1,1465 @@
+From 290160b29ba0330ee6c767f5894c4b0355813323 Mon Sep 17 00:00:00 2001
+From: sardi-dev <134648583+sardi-dev@users.noreply.github.com>
+Date: Wed, 18 Nov 2026 20:12:37 +0000
+Subject: [PATCH 17/25] Add the Silvershard Mines battleground
+
+The battleground had a template row and a start location but no class, so
+it could not be queued for or played. Three mine carts ride rails to the
+depots, the team standing next to a cart keeps it, and a cart that reaches
+a depot gives its keeper 150 points. Each kept cart also gives one point
+per second, the first team to 1600 wins. The two track switches change
+where the east and the north cart end up.
+
+Adds the queue type, the scoreboard column, the cart paths, the spell click
+rows of the track switches and the strings of the messages. Capturing
+(97388) and the dummy it triggers (97372) call the battleground through the
+new Unit overload of EventPlayerClickedOnFlag. The achievements of the map
+are left out, their criteria types are not implemented.
+
+Based on Legends of Azeroth 5.4.8.
+---
+ .../2026_11_18_world_silvershard_mines.sql    | 250 +++++++
+ src/server/game/Battlegrounds/Battleground.h  |   8 +-
+ .../game/Battlegrounds/BattlegroundMgr.cpp    |  19 +
+ .../Battlegrounds/Zones/BattlegroundSM.cpp    | 628 ++++++++++++++++++
+ .../game/Battlegrounds/Zones/BattlegroundSM.h | 299 +++++++++
+ src/server/game/Entities/Player/Player.cpp    |   5 +
+ src/server/game/Miscellaneous/Language.h      |  15 +
+ src/server/game/Miscellaneous/SharedDefines.h |   9 +-
+ src/server/game/Spells/SpellEffectsScript.cpp |   6 +
+ src/server/scripts/Spells/spell_generic.cpp   |  41 ++
+ 10 files changed, 1275 insertions(+), 5 deletions(-)
+ create mode 100644 sql/pending_updates/world/2026_11_18_world_silvershard_mines.sql
+ create mode 100644 src/server/game/Battlegrounds/Zones/BattlegroundSM.cpp
+ create mode 100644 src/server/game/Battlegrounds/Zones/BattlegroundSM.h
+
+diff --git a/sql/pending_updates/world/2026_11_18_world_silvershard_mines.sql b/sql/pending_updates/world/2026_11_18_world_silvershard_mines.sql
+new file mode 100644
+index 0000000000..0fe57c8188
+--- /dev/null
++++ b/sql/pending_updates/world/2026_11_18_world_silvershard_mines.sql
+@@ -0,0 +1,250 @@
++-- Silvershard Mines: the battleground itself (queue, scoring and end are in the core). Based on Legends of Azeroth 5.4.8.
++
++-- Strings of the battleground messages
++DELETE FROM `skyfire_string` WHERE `entry` BETWEEN 12100 AND 12112;
++INSERT INTO `skyfire_string` (`entry`, `content_default`) VALUES
++(12100, 'The battle for Silvershard Mines begins in 2 minutes.'),
++(12101, 'The battle for Silvershard Mines begins in 1 minute.'),
++(12102, 'The battle for Silvershard Mines begins in 30 seconds. Prepare yourselves!'),
++(12103, 'The battle for Silvershard Mines has begun!'),
++(12104, 'The Eastern Crossroads changed tracks!'),
++(12105, 'The Northern Crossroads changed tracks!'),
++(12106, 'A Mine Cart has arrived from the central depot.'),
++(12107, 'The Alliance has taken control of a Mine Cart!'),
++(12108, 'The Horde has taken control of a Mine Cart!'),
++(12109, 'The Alliance has captured a Mine Cart!'),
++(12110, 'The Horde has captured a Mine Cart!'),
++(12111, 'The Alliance has gathered $6437W resources, and is near victory!'),
++(12112, 'The Horde has gathered $6438W resources, and is near victory!');
++
++-- Template: orientation of the start positions, the distance players may leave the starting area and a share in the random battleground
++UPDATE `battleground_template` SET `AllianceStartO` = 5.59277, `HordeStartO` = 5.57851, `StartMaxDist` = 50, `Weight` = 1 WHERE `id` = 708;
++
++-- Track switches are clicked (Capturing, 124492, triggers 97372 on the switch), the carts and the depots get their names and levels
++UPDATE `creature_template` SET `minlevel` = 90, `maxlevel` = 90, `npcflag` = 16777216, `unit_flags` = 16777216 WHERE `entry` = 60283;
++UPDATE `creature_template` SET `minlevel` = 90, `maxlevel` = 90 WHERE `entry` IN (60378, 60379, 60380);
++UPDATE `gameobject_template` SET `name` = 'Waterfall Depot' WHERE `entry` = 212080;
++UPDATE `gameobject_template` SET `name` = 'Lava Depot' WHERE `entry` = 212081;
++UPDATE `gameobject_template` SET `name` = 'Diamond Depot' WHERE `entry` = 212082;
++UPDATE `gameobject_template` SET `name` = 'Troll Depot' WHERE `entry` = 212083;
++
++DELETE FROM `npc_spellclick_spells` WHERE `npc_entry` = 60283;
++INSERT INTO `npc_spellclick_spells` (`npc_entry`, `spell_id`, `cast_flags`, `user_type`) VALUES
++(60283, 124492, 1, 0);
++
++DELETE FROM `conditions` WHERE `SourceTypeOrReferenceId` = 13 AND `SourceEntry` = 97372;
++INSERT INTO `conditions` (`SourceTypeOrReferenceId`, `SourceGroup`, `SourceEntry`, `SourceId`, `ElseGroup`, `ConditionTypeOrReference`, `ConditionTarget`, `ConditionValue1`, `ConditionValue2`, `ConditionValue3`, `NegativeCondition`, `ErrorType`, `ErrorTextId`, `ScriptName`, `Comment`) VALUES
++(13, 1, 97372, 0, 0, 31, 0, 3, 60283, 0, 0, 0, 0, '', 'Capturing - only hits a Track Switch');
++
++DELETE FROM `spell_script_names` WHERE `spell_id` = 124492;
++INSERT INTO `spell_script_names` (`spell_id`, `ScriptName`) VALUES
++(124492, 'spell_gen_bg_capturing');
++
++-- Paths of the mine carts
++DELETE FROM `waypoint_data` WHERE `id` IN (7270011,7270012,7270013,7270021,7270031,7270032,7270033);
++-- 7270011: east track, first leg to the track switch
++INSERT INTO `waypoint_data` (`id`, `point`, `position_x`, `position_y`, `position_z`) VALUES
++(7270011, 1, 739.813, 171.528, 319.366),
++(7270011, 2, 734.332, 160.725, 319.002),
++(7270011, 3, 729.062, 152.014, 319.669),
++(7270011, 4, 725.965, 146.377, 319.708),
++(7270011, 5, 721.922, 137.435, 319.589),
++(7270011, 6, 718.783, 127.548, 319.538),
++(7270011, 7, 717.631, 121.792, 320.194),
++(7270011, 8, 717.228, 114.484, 320.805);
++-- 7270012: east track, switch opened, to the Lava depot
++INSERT INTO `waypoint_data` (`id`, `point`, `position_x`, `position_y`, `position_z`) VALUES
++(7270012, 1, 715.531, 108.876, 320.43),
++(7270012, 2, 713.416, 104.558, 320.069),
++(7270012, 3, 711.746, 102.69, 319.64),
++(7270012, 4, 709.642, 100.842, 319.294),
++(7270012, 5, 708.178, 100.004, 319),
++(7270012, 6, 705.397, 98.7144, 318.396),
++(7270012, 7, 702.835, 97.6023, 317.759),
++(7270012, 8, 697.029, 96.5836, 316.458),
++(7270012, 9, 683.955, 95.0268, 313.616),
++(7270012, 10, 680.408, 94.2097, 312.532),
++(7270012, 11, 675.415, 92.4758, 310.801),
++(7270012, 12, 672.125, 91.0206, 309.622),
++(7270012, 13, 661.984, 85.0794, 305.739),
++(7270012, 14, 653.964, 82.3568, 303.486),
++(7270012, 15, 645.297, 81.5135, 300.888),
++(7270012, 16, 635.492, 80.9613, 298.712),
++(7270012, 17, 627.331, 80.2791, 298.515),
++(7270012, 18, 624.142, 79.9377, 298.447);
++-- 7270013: east track, switch closed, to the Diamond depot
++INSERT INTO `waypoint_data` (`id`, `point`, `position_x`, `position_y`, `position_z`) VALUES
++(7270013, 1, 716.947, 109.533, 320.581),
++(7270013, 2, 717.158, 107.275, 320.577),
++(7270013, 3, 717.906, 104.245, 320.656),
++(7270013, 4, 719.95, 101.224, 320.88),
++(7270013, 5, 723.498, 98.4203, 321.518),
++(7270013, 6, 729.429, 95.95, 322.576),
++(7270013, 7, 737.529, 93.7233, 325.273),
++(7270013, 8, 748.309, 91.8956, 328.89),
++(7270013, 9, 757.356, 89.9509, 331.927),
++(7270013, 10, 767.714, 85.7086, 336.007),
++(7270013, 11, 773.101, 82.8226, 338.373),
++(7270013, 12, 779.201, 80.4309, 340.968),
++(7270013, 13, 790.073, 78.9228, 344.601),
++(7270013, 14, 794.567, 77.7644, 346.229),
++(7270013, 15, 800.644, 76.0276, 348.893),
++(7270013, 16, 803.136, 74.812, 349.561),
++(7270013, 17, 806.982, 72.4138, 350.599),
++(7270013, 18, 809.964, 70.1494, 351.493),
++(7270013, 19, 815.473, 66.1927, 353.279),
++(7270013, 20, 820.528, 63.7024, 354.622),
++(7270013, 21, 824.337, 62.7775, 355.605),
++(7270013, 22, 828.828, 62.3146, 356.733),
++(7270013, 23, 833.417, 64.0282, 357.726),
++(7270013, 24, 837.725, 67.406, 358.628),
++(7270013, 25, 842.537, 70.2675, 359.654),
++(7270013, 26, 846.829, 71.5992, 360.651),
++(7270013, 27, 851.902, 71.3907, 361.48),
++(7270013, 28, 856.336, 70.1419, 362.187),
++(7270013, 29, 863.724, 66.298, 363.305),
++(7270013, 30, 872.97, 58.4015, 364.351),
++(7270013, 31, 878.484, 52.6757, 364.342),
++(7270013, 32, 884.031, 45.2952, 363.741),
++(7270013, 33, 888.753, 38.6393, 363.604),
++(7270013, 34, 893.231, 33.0419, 363.857),
++(7270013, 35, 894.109, 31.8979, 363.903);
++-- 7270021: waterfall, to the Waterfall depot
++INSERT INTO `waypoint_data` (`id`, `point`, `position_x`, `position_y`, `position_z`) VALUES
++(7270021, 1, 736.548, 206.805, 319.452),
++(7270021, 2, 732.146, 214.183, 320.143),
++(7270021, 3, 729.917, 219.983, 320.318),
++(7270021, 4, 729, 226.652, 320.614),
++(7270021, 5, 724.547, 238.792, 320.744),
++(7270021, 6, 720.361, 244.472, 321.131),
++(7270021, 7, 715.631, 251.413, 321.044),
++(7270021, 8, 710.624, 261.126, 320.713),
++(7270021, 9, 708.395, 267.442, 320.558),
++(7270021, 10, 703.663, 277.893, 320.466),
++(7270021, 11, 696.197, 290.645, 320.586),
++(7270021, 12, 687.134, 300.56, 320.928),
++(7270021, 13, 675.485, 310.659, 321.804),
++(7270021, 14, 661.001, 323.359, 324.457),
++(7270021, 15, 650.727, 331.558, 327.443),
++(7270021, 16, 636.847, 343.759, 333.088),
++(7270021, 17, 631.819, 345.491, 335.22),
++(7270021, 18, 626.499, 345.424, 337.202),
++(7270021, 19, 601.887, 340.112, 344.394),
++(7270021, 20, 592.689, 339.309, 345.928),
++(7270021, 21, 580.856, 337.289, 346.313),
++(7270021, 22, 571.85, 336.916, 346.569);
++-- 7270031: north track, first leg to the track switch
++INSERT INTO `waypoint_data` (`id`, `point`, `position_x`, `position_y`, `position_z`) VALUES
++(7270031, 1, 762.477, 199.89, 319.583),
++(7270031, 2, 765.152, 202.359, 319.897),
++(7270031, 3, 767.123, 204.728, 319.969),
++(7270031, 4, 770.686, 210.459, 321.337),
++(7270031, 5, 773.192, 215.373, 322.098),
++(7270031, 6, 776.042, 221.111, 322.779),
++(7270031, 7, 778.197, 226.702, 323.663),
++(7270031, 8, 780.86, 235.445, 326.113),
++(7270031, 9, 785.627, 246.242, 329.131),
++(7270031, 10, 789.242, 252.73, 332.243),
++(7270031, 11, 794.445, 259.695, 336.467),
++(7270031, 12, 800.921, 267.035, 339.987),
++(7270031, 13, 807.956, 274.195, 342.559),
++(7270031, 14, 814.702, 280.892, 344.462),
++(7270031, 15, 821.345, 287.324, 345.47),
++(7270031, 16, 828.885, 293.503, 346.333),
++(7270031, 17, 834.802, 299.641, 346.814);
++-- 7270032: north track, switch closed, to the Troll depot
++INSERT INTO `waypoint_data` (`id`, `point`, `position_x`, `position_y`, `position_z`) VALUES
++(7270032, 1, 838.299, 303.651, 346.869),
++(7270032, 2, 841.428, 308.21, 346.912),
++(7270032, 3, 844.756, 314.221, 347.015),
++(7270032, 4, 847.569, 320.454, 347.146),
++(7270032, 5, 848.459, 325.685, 346.852),
++(7270032, 6, 848.214, 330.158, 347.114),
++(7270032, 7, 846.538, 340.906, 347.172),
++(7270032, 8, 845.114, 346.511, 347.103),
++(7270032, 9, 837.194, 362.91, 346.901),
++(7270032, 10, 833.275, 369.036, 346.856),
++(7270032, 11, 830.817, 374.828, 346.754),
++(7270032, 12, 826.987, 384.754, 346.599),
++(7270032, 13, 821.844, 399.795, 346.437),
++(7270032, 14, 818.729, 406.383, 347.448),
++(7270032, 15, 816.959, 413.134, 348.709),
++(7270032, 16, 816.845, 419.167, 349.887),
++(7270032, 17, 816.607, 426.345, 352.09),
++(7270032, 18, 814.784, 432.833, 354.16),
++(7270032, 19, 812.513, 438.346, 355.59),
++(7270032, 20, 810.702, 442.726, 356.727),
++(7270032, 21, 809.238, 448.982, 357.445),
++(7270032, 22, 807.673, 456.378, 358.182),
++(7270032, 23, 806.689, 465.029, 358.637),
++(7270032, 24, 804.531, 471.067, 358.976),
++(7270032, 25, 801.525, 476.126, 359.208),
++(7270032, 26, 798.482, 480.118, 359.192),
++(7270032, 27, 794.889, 484.412, 359.333),
++(7270032, 28, 789.291, 489.534, 359.266),
++(7270032, 29, 785.138, 493.456, 359.315),
++(7270032, 30, 783.313, 495.286, 359.321),
++(7270032, 31, 781.314, 497.576, 359.328);
++-- 7270033: north track, switch opened, to the Diamond depot
++INSERT INTO `waypoint_data` (`id`, `point`, `position_x`, `position_y`, `position_z`) VALUES
++(7270033, 1, 837.828, 302.35, 346.86),
++(7270033, 2, 841.867, 303.567, 346.89),
++(7270033, 3, 845.365, 303.699, 346.92),
++(7270033, 4, 851.728, 303.484, 346.967),
++(7270033, 5, 856.458, 302.576, 347.015),
++(7270033, 6, 862.241, 300.385, 347.063),
++(7270033, 7, 867.288, 297.62, 347.007),
++(7270033, 8, 872.097, 293.145, 347.096),
++(7270033, 9, 876.515, 288.124, 347.068),
++(7270033, 10, 881.695, 279.532, 346.77),
++(7270033, 11, 883.794, 274.745, 346.361),
++(7270033, 12, 886.592, 269.298, 346.023),
++(7270033, 13, 888.886, 262.982, 345.738),
++(7270033, 14, 890.814, 258.054, 345.62),
++(7270033, 15, 892.383, 252.914, 345.493),
++(7270033, 16, 893.526, 247.444, 345.519),
++(7270033, 17, 894.84, 241.692, 345.737),
++(7270033, 18, 895.343, 236.129, 346.965),
++(7270033, 19, 896.554, 230.642, 348.41),
++(7270033, 20, 898.72, 224.644, 350.104),
++(7270033, 21, 900.815, 219.293, 351.663),
++(7270033, 22, 903.171, 213.808, 353.278),
++(7270033, 23, 905.427, 207.215, 355.232),
++(7270033, 24, 906.886, 201.117, 357.014),
++(7270033, 25, 908.49, 194.291, 359.015),
++(7270033, 26, 910.714, 182.699, 362.34),
++(7270033, 27, 912.146, 174.145, 364.93),
++(7270033, 28, 912.509, 170.198, 366.133),
++(7270033, 29, 911.992, 164.993, 366.294),
++(7270033, 30, 911.112, 160.172, 366.373),
++(7270033, 31, 909.908, 155.99, 366.418),
++(7270033, 32, 908.492, 152.966, 366.436),
++(7270033, 33, 906.588, 149.528, 366.431),
++(7270033, 34, 903.286, 144.345, 366.412),
++(7270033, 35, 900.942, 140.511, 366.323),
++(7270033, 36, 896.853, 136.453, 366.272),
++(7270033, 37, 894.221, 133.493, 366.239),
++(7270033, 38, 891.69, 130.435, 366.216),
++(7270033, 39, 888.906, 126.811, 366.131),
++(7270033, 40, 887.541, 124.667, 366.072),
++(7270033, 41, 884.967, 119.464, 365.879),
++(7270033, 42, 883.253, 112.678, 365.593),
++(7270033, 43, 882.509, 107.984, 365.393),
++(7270033, 44, 882.227, 104.39, 365.255),
++(7270033, 45, 883.121, 98.8977, 365.043),
++(7270033, 46, 885.631, 93.4154, 364.883),
++(7270033, 47, 887.995, 90.2794, 364.806),
++(7270033, 48, 889.728, 87.0795, 364.732),
++(7270033, 49, 891.275, 81.9749, 364.601),
++(7270033, 50, 891.068, 76.7711, 364.459),
++(7270033, 51, 890.494, 72.6387, 364.551),
++(7270033, 52, 890.062, 70.2632, 364.539),
++(7270033, 53, 890.258, 62.7693, 364.479),
++(7270033, 54, 891.335, 58.019, 364.319),
++(7270033, 55, 892.202, 54.3413, 364.058),
++(7270033, 56, 893.22, 51.1704, 363.776),
++(7270033, 57, 893.571, 44.8804, 363.724),
++(7270033, 58, 893.296, 40.7391, 363.68),
++(7270033, 59, 893.186, 36.3522, 363.765),
++(7270033, 60, 893.328, 33.1407, 363.858),
++(7270033, 61, 894.002, 31.8534, 363.9);
+diff --git a/src/server/game/Battlegrounds/Battleground.h b/src/server/game/Battlegrounds/Battleground.h
+index 0b52fefc23..7a00abbfac 100644
+--- a/src/server/game/Battlegrounds/Battleground.h
++++ b/src/server/game/Battlegrounds/Battleground.h
+@@ -200,7 +200,11 @@ enum ScoreType
+     SCORE_DESTROYED_WALL = 19,
+     //VOP
+     SCORE_ORB_CONTROL = 20,
+-    SCORE_ORB_SCORE = 21
++    SCORE_ORB_SCORE = 21,
++    //SM and DG
++    SCORE_CART_CAPTURES = 22,
++    SCORE_CART_RETURNS = 23,
++    SCORE_CART_CONTROLLED = 24
+ };
+ 
+ 
+@@ -480,6 +484,8 @@ public:
+     // Battleground events
+     virtual void EventPlayerDroppedFlag(Player* /*player*/) { }
+     virtual void EventPlayerClickedOnFlag(Player* /*player*/, GameObject* /*target_obj*/) { }
++    virtual void EventPlayerClickedOnFlag(Player* /*player*/, Unit* /*target*/) { }
++    virtual bool CanSeeSpellClick(Player const* /*player*/, Unit const* /*clicked*/) { return true; }
+     void EventPlayerLoggedIn(Player* player);
+     void EventPlayerLoggedOut(Player* player);
+     virtual void EventPlayerDamagedGO(Player* /*player*/, GameObject* /*go*/, uint32 /*eventType*/) { }
+diff --git a/src/server/game/Battlegrounds/BattlegroundMgr.cpp b/src/server/game/Battlegrounds/BattlegroundMgr.cpp
+index e67d5f0850..58eb1ad654 100644
+--- a/src/server/game/Battlegrounds/BattlegroundMgr.cpp
++++ b/src/server/game/Battlegrounds/BattlegroundMgr.cpp
+@@ -22,6 +22,7 @@
+ #include "BattlegroundRL.h"
+ #include "BattlegroundRV.h"
+ #include "BattlegroundSA.h"
++#include "BattlegroundSM.h"
+ #include "BattlegroundTP.h"
+ #include "BattlegroundTV.h"
+ #include "BattlegroundVOP.h"
+@@ -455,6 +456,10 @@ void BattlegroundMgr::BuildPvpLogDataPacket(WorldPacket* data, Battleground* bg)
+                         buff << uint32(((BattlegroundVOPScore*)score)->OrbControl);         // orb possession
+                         buff << uint32(((BattlegroundVOPScore*)score)->OrbScore);           // victory points
+                         break;
++                    case 727:
++                        data->WriteBits(1, 22);
++                        buff << uint32(((BattlegroundSMScore*)score)->MineCartCaptures);     // mine carts captured
++                        break;
+                     default:
+                         data->WriteBits(0, 22);
+                         break;
+@@ -507,6 +512,10 @@ void BattlegroundMgr::BuildPvpLogDataPacket(WorldPacket* data, Battleground* bg)
+                 buff << uint32(((BattlegroundVOPScore*)score)->OrbControl);         // orb possession
+                 buff << uint32(((BattlegroundVOPScore*)score)->OrbScore);           // victory Points
+                 break;
++            case BattlegroundTypeId::BATTLEGROUND_SM:
++                data->WriteBits(1, 22);
++                buff << uint32(((BattlegroundSMScore*)score)->MineCartCaptures);     // mine carts captured
++                break;
+             case BattlegroundTypeId::BATTLEGROUND_NA:
+             case BattlegroundTypeId::BATTLEGROUND_BE:
+             case BattlegroundTypeId::BATTLEGROUND_AA:
+@@ -846,6 +855,9 @@ Battleground* BattlegroundMgr::CreateNewBattleground(BattlegroundTypeId original
+         case BattlegroundTypeId::BATTLEGROUND_VOP:
+             bg = new BattlegroundVOP(*(BattlegroundVOP*)bg_template);
+             break;
++        case BattlegroundTypeId::BATTLEGROUND_SM:
++            bg = new BattlegroundSM(*(BattlegroundSM*)bg_template);
++            break;
+         case BattlegroundTypeId::BATTLEGROUND_TV:
+             bg = new BattlegroundTV(*(BattlegroundTV*)bg_template);
+             break;
+@@ -952,6 +964,9 @@ bool BattlegroundMgr::CreateBattleground(CreateBattlegroundData& data)
+         case BattlegroundTypeId::BATTLEGROUND_VOP:
+             bg = new BattlegroundVOP;
+             break;
++        case BattlegroundTypeId::BATTLEGROUND_SM:
++            bg = new BattlegroundSM;
++            break;
+         default:
+             return false;
+     }
+@@ -1230,6 +1245,8 @@ BattlegroundQueueTypeId BattlegroundMgr::BGQueueTypeId(BattlegroundTypeId bgType
+             return BATTLEGROUND_QUEUE_WS;
+         case BattlegroundTypeId::BATTLEGROUND_VOP:
+             return BATTLEGROUND_QUEUE_VOP;
++        case BattlegroundTypeId::BATTLEGROUND_SM:
++            return BATTLEGROUND_QUEUE_SM;
+         case BattlegroundTypeId::BATTLEGROUND_AA:
+         case BattlegroundTypeId::BATTLEGROUND_BE:
+         case BattlegroundTypeId::BATTLEGROUND_DS:
+@@ -1277,6 +1294,8 @@ BattlegroundTypeId BattlegroundMgr::BGTemplateId(BattlegroundQueueTypeId bgQueue
+             return BattlegroundTypeId::BATTLEGROUND_RB;
+         case BATTLEGROUND_QUEUE_VOP:
+             return BattlegroundTypeId::BATTLEGROUND_VOP;
++        case BATTLEGROUND_QUEUE_SM:
++            return BattlegroundTypeId::BATTLEGROUND_SM;
+         case BATTLEGROUND_QUEUE_2v2:
+         case BATTLEGROUND_QUEUE_3v3:
+         case BATTLEGROUND_QUEUE_5v5:
+diff --git a/src/server/game/Battlegrounds/Zones/BattlegroundSM.cpp b/src/server/game/Battlegrounds/Zones/BattlegroundSM.cpp
+new file mode 100644
+index 0000000000..301bf19636
+--- /dev/null
++++ b/src/server/game/Battlegrounds/Zones/BattlegroundSM.cpp
+@@ -0,0 +1,628 @@
++/*
++* This file is part of the Legends of Azeroth Pandaria Project. See THANKS file for Copyright information
++*
++* This program is free software; you can redistribute it and/or modify it
++* under the terms of the GNU General Public License as published by the
++* Free Software Foundation; either version 2 of the License, or (at your
++* option) any later version.
++*
++* This program is distributed in the hope that it will be useful, but WITHOUT
++* ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++* FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
++* more details.
++*
++* You should have received a copy of the GNU General Public License along
++* with this program. If not, see <http://www.gnu.org/licenses/>.
++*/
++
++#include "BattlegroundMgr.h"
++#include "BattlegroundSM.h"
++#include "Creature.h"
++#include "GameObject.h"
++#include "Language.h"
++#include "ObjectAccessor.h"
++#include "ObjectMgr.h"
++#include "Player.h"
++#include "Util.h"
++#include "World.h"
++#include "WorldPacket.h"
++
++enum
++{
++    OBJECTIVE_CAPTURE_MINE_CART     = 428,      // 7102 - Escort Service
++    NPC_SILVERSHARD_MINES_CREDIT    = 68932     // kill credit of the victory quest
++};
++
++uint32 const BG_SM_DepotEntries[SM_DEPOT_MAX] =
++{
++    BG_SM_WATERFALL_DEPOT,
++    BG_SM_LAVA_DEPOT,
++    BG_SM_DIAMOND_DEPOT,
++    BG_SM_TROLL_DEPOT
++};
++
++uint32 const BG_SM_FirstLegPaths[SM_MINE_CART_MAX] =
++{
++    BG_SM_PATH_EAST_FIRST_LEG,
++    BG_SM_PATH_WATERFALL,
++    BG_SM_PATH_NORTH_FIRST_LEG
++};
++
++BattlegroundSM::BattlegroundSM()
++{
++    // Each buff spot has one object, the buff type is not swapped when it is taken
++    m_BuffChange = false;
++    BgObjects.resize(BG_SM_OBJECT_MAX);
++    BgCreatures.resize(BG_SM_CREATURES_MAX);
++
++    StartMessageIds[BG_STARTING_EVENT_FIRST]  = LANG_BG_SM_START_TWO_MINUTES;
++    StartMessageIds[BG_STARTING_EVENT_SECOND] = LANG_BG_SM_START_ONE_MINUTE;
++    StartMessageIds[BG_STARTING_EVENT_THIRD]  = LANG_BG_SM_START_HALF_MINUTE;
++    StartMessageIds[BG_STARTING_EVENT_FOURTH] = LANG_BG_SM_HAS_BEGUN;
++}
++
++BattlegroundSM::~BattlegroundSM() { }
++
++void BattlegroundSM::Reset()
++{
++    Battleground::Reset();
++
++    bool isBGWeekEnd = sBattlegroundMgr->IsBGWeekend(GetTypeID());
++    m_honorTicks = isBGWeekEnd ? BG_SM_SMWEEKEND_HONOR_TICKS : BG_SM_NOT_SMWEEKEND_HONOR_TICKS;
++    m_HonorWinKills = isBGWeekEnd ? 3 : 1;
++    m_HonorEndKills = isBGWeekEnd ? 4 : 2;
++
++    m_TeamScores[TEAM_ALLIANCE] = 0;
++    m_TeamScores[TEAM_HORDE] = 0;
++    m_HonorScoreTics[TEAM_ALLIANCE] = 0;
++    m_HonorScoreTics[TEAM_HORDE] = 0;
++    m_mineCartCheckTimer = IN_MILLISECONDS;
++    m_mineCartAddPointsTimer = 2 * IN_MILLISECONDS;
++    m_isInformedNearVictory = false;
++    m_mineCartsSpawned = false;
++
++    for (uint8 i = 0; i < SM_MINE_CART_MAX; ++i)
++    {
++        m_mineCartsProgressBar[i] = BG_SM_PROGRESS_BAR_NEUTRAL;
++        m_mineCartPathStage[i] = 0;
++        m_mineCartDepot[i] = SM_NO_DEPOT;
++        m_depotCloseTimer[i] = 0;
++    }
++
++    for (uint8 i = 0; i < SM_MAX_TRACK_SWITCH; ++i)
++    {
++        m_trackSwitchClickTimer[i] = 0;
++        m_trackSwitchOpened[i] = false;
++        m_trackSwitchCanInteract[i] = true;
++    }
++}
++
++bool BattlegroundSM::SetupBattleground()
++{
++    for (uint8 i = 0; i < SM_DEPOT_MAX; ++i)
++    {
++        if (!AddObject(BG_SM_OBJECT_WATERFALL_DEPOT + i, BG_SM_DepotEntries[i], BG_SM_DepotPos[i][0], BG_SM_DepotPos[i][1], BG_SM_DepotPos[i][2], BG_SM_DepotPos[i][3], 0, 0, 0, 0, RESPAWN_IMMEDIATELY))
++        {
++            SF_LOG_ERROR("bg.battleground", "BattlegroundSM: Failed to spawn depot %u. Battleground not created!", uint32(i));
++            return false;
++        }
++    }
++
++    for (uint8 i = 0; i < 4; ++i)
++    {
++        if (!AddObject(BG_SM_OBJECT_DOOR_A_1 + i, BG_SM_DOOR, BG_SM_DoorPos[i][0], BG_SM_DoorPos[i][1], BG_SM_DoorPos[i][2], BG_SM_DoorPos[i][3], 0, 0, 0, 0, RESPAWN_IMMEDIATELY))
++        {
++            SF_LOG_ERROR("bg.battleground", "BattlegroundSM: Failed to spawn door %u. Battleground not created!", uint32(i));
++            return false;
++        }
++
++        uint32 buffEntry = (i < 2) ? BG_OBJECTID_BERSERKERBUFF_ENTRY : BG_OBJECTID_REGENBUFF_ENTRY;
++        if (!AddObject(BG_SM_OBJECT_BERSERKING_BUFF_EAST + i, buffEntry, BG_SM_BuffPos[i][0], BG_SM_BuffPos[i][1], BG_SM_BuffPos[i][2], BG_SM_BuffPos[i][3], 0, 0, 0, 0, RESPAWN_IMMEDIATELY))
++        {
++            SF_LOG_ERROR("bg.battleground", "BattlegroundSM: Failed to spawn buff %u. Battleground not created!", uint32(i));
++            return false;
++        }
++    }
++
++    for (uint8 i = 0; i < SM_MAX_TRACK_SWITCH; ++i)
++    {
++        Creature* trackSwitch = AddCreature(NPC_TRACK_SWITCH, SM_TRACK_SWITCH_EAST + i, 0, BG_SM_TrackPos[i][0], BG_SM_TrackPos[i][1], BG_SM_TrackPos[i][2], BG_SM_TrackPos[i][3]);
++        if (!trackSwitch)
++        {
++            SF_LOG_ERROR("bg.battleground", "BattlegroundSM: Failed to spawn track switch %u. Battleground not created!", uint32(i));
++            return false;
++        }
++
++        trackSwitch->CastSpell(trackSwitch, BG_SM_FEIGN_DEATH_STUN, true);
++    }
++
++    // The spirit guides stand where the teams start
++    for (uint8 team = TEAM_ALLIANCE; team <= TEAM_HORDE; ++team)
++    {
++        WorldSafeLocsEntry const* safeLoc = sWorldSafeLocsStore.LookupEntry(team == TEAM_ALLIANCE ? SM_GRAVEYARD_MAIN_ALLIANCE : SM_GRAVEYARD_MAIN_HORDE);
++        float x, y, z, o;
++        GetTeamStartLoc(team == TEAM_ALLIANCE ? ALLIANCE : HORDE, x, y, z, o);
++        if (!safeLoc || !AddSpiritGuide(SM_SPIRIT_ALLIANCE + team, safeLoc->x, safeLoc->y, safeLoc->z, o, team == TEAM_ALLIANCE ? ALLIANCE : HORDE))
++        {
++            SF_LOG_ERROR("bg.battleground", "BattlegroundSM: Failed to spawn spirit guide %u. Battleground not created!", uint32(team));
++            return false;
++        }
++    }
++
++    return true;
++}
++
++void BattlegroundSM::StartingEventCloseDoors()
++{
++    for (uint8 i = BG_SM_OBJECT_DOOR_A_1; i <= BG_SM_OBJECT_DOOR_H_2; ++i)
++    {
++        DoorClose(i);
++        SpawnBGObject(i, RESPAWN_IMMEDIATELY);
++    }
++
++    // The depots and the buffs only show up once the battle starts
++    for (uint8 i = BG_SM_OBJECT_WATERFALL_DEPOT; i < BG_SM_OBJECT_MAX; ++i)
++        SpawnBGObject(i, RESPAWN_ONE_DAY);
++}
++
++void BattlegroundSM::StartingEventOpenDoors()
++{
++    for (uint8 i = BG_SM_OBJECT_DOOR_A_1; i <= BG_SM_OBJECT_DOOR_H_2; ++i)
++        DoorOpen(i);
++
++    for (uint8 i = BG_SM_OBJECT_WATERFALL_DEPOT; i < BG_SM_OBJECT_MAX; ++i)
++        SpawnBGObject(i, RESPAWN_IMMEDIATELY);
++}
++
++void BattlegroundSM::AddPlayer(Player* player)
++{
++    Battleground::AddPlayer(player);
++
++    PlayerScores[player->GetGUID()] = new BattlegroundSMScore();
++}
++
++void BattlegroundSM::PostUpdateImpl(uint32 diff)
++{
++    // The carts wait at their start while the players are still in the starting area
++    if (!m_mineCartsSpawned)
++    {
++        for (uint8 i = 0; i < SM_MINE_CART_MAX; ++i)
++            SpawnMineCart(i, false);
++
++        m_mineCartsSpawned = true;
++    }
++
++    if (GetStatus() != STATUS_IN_PROGRESS)
++        return;
++
++    // A captured cart is gone, the next one comes from the central depot
++    for (uint8 i = 0; i < SM_MINE_CART_MAX; ++i)
++        if (!GetMineCart(i))
++            SpawnMineCart(i, true);
++
++    if (m_mineCartCheckTimer <= int32(diff))
++    {
++        UpdateCartControl();
++        m_mineCartCheckTimer = IN_MILLISECONDS;
++    }
++    else
++        m_mineCartCheckTimer -= diff;
++
++    CheckMineCartNearDepot();
++    EventReopenDepot(diff);
++    MineCartAddPoints(diff);
++
++    for (uint8 i = 0; i < SM_MAX_TRACK_SWITCH; ++i)
++        CheckTrackSwitch(i, diff);
++
++    MineCartsMoves();
++}
++
++Creature* BattlegroundSM::GetMineCart(uint8 mineCart)
++{
++    return GetBgMap()->GetCreature(BgCreatures[NPC_SM_MINE_CART_1 + mineCart]);
++}
++
++void BattlegroundSM::SpawnMineCart(uint8 mineCart, bool announce)
++{
++    Creature* cart = AddCreature(BG_SM_CartIDs[mineCart], NPC_SM_MINE_CART_1 + mineCart, 0, BG_SM_StartPos[mineCart][0], BG_SM_StartPos[mineCart][1], BG_SM_StartPos[mineCart][2], BG_SM_StartPos[mineCart][3]);
++    if (!cart)
++        return;
++
++    cart->CastSpell(cart, BG_SM_CONTROL_VISUAL_NEUTRAL, true);
++    cart->SetUnitMovementFlags(MOVEMENTFLAG_BACKWARD);
++    cart->SetFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_NOT_SELECTABLE);
++    cart->SetSpeed(MOVE_WALK, 0.8f);
++
++    m_mineCartsProgressBar[mineCart] = BG_SM_PROGRESS_BAR_NEUTRAL;
++    m_mineCartPathStage[mineCart] = 0;
++    m_mineCartDepot[mineCart] = SM_NO_DEPOT;
++
++    if (announce)
++    {
++        SendMessageToAll(LANG_BG_SM_MINE_CART_SPAWNED, ChatMsg::CHAT_MSG_BG_SYSTEM_NEUTRAL);
++        PlaySoundToAll(BG_SM_SOUND_MINE_CART_SPAWNED);
++    }
++}
++
++// The bar of a cart moves one step per second and player standing next to it, towards the team of the player
++void BattlegroundSM::UpdateCartControl()
++{
++    bool changed[SM_MINE_CART_MAX] = { };
++
++    for (BattlegroundPlayerMap::const_iterator itr = GetPlayers().begin(); itr != GetPlayers().end(); ++itr)
++    {
++        Player* player = ObjectAccessor::FindPlayer(itr->first);
++        if (!player || player->HasAuraType(SPELL_AURA_MOD_STEALTH))
++            continue;
++
++        bool nearCart = false;
++        if (player->IsAlive())
++        {
++            for (uint8 i = 0; i < SM_MINE_CART_MAX; ++i)
++            {
++                Creature* cart = GetMineCart(i);
++                if (!cart || !player->IsWithinDist(cart, float(BG_SM_CART_CONTROL_RANGE)))
++                    continue;
++
++                int32& progress = m_mineCartsProgressBar[i];
++                if (player->GetBGTeam() == ALLIANCE)
++                    progress = std::min<int32>(progress + 1, BG_SM_PROGRESS_BAR_MAX);
++                else
++                    progress = std::max<int32>(progress - 1, 0);
++
++                UpdateWorldStateForPlayer(SM_DISPLAY_PROGRESS_BAR, BG_SM_PROGRESS_BAR_SHOW, player);
++                UpdateWorldStateForPlayer(SM_PROGRESS_BAR_STATUS, progress, player);
++                changed[i] = true;
++                nearCart = true;
++                break;
++            }
++        }
++
++        if (!nearCart)
++            UpdateWorldStateForPlayer(SM_DISPLAY_PROGRESS_BAR, BG_SM_PROGRESS_BAR_DONT_SHOW, player);
++    }
++
++    for (uint8 i = 0; i < SM_MINE_CART_MAX; ++i)
++        if (changed[i])
++            UpdateCartVisual(i);
++}
++
++void BattlegroundSM::UpdateCartVisual(uint8 mineCart)
++{
++    Creature* cart = GetMineCart(mineCart);
++    if (!cart)
++        return;
++
++    uint32 keeper = GetMineCartTeamKeeper(mineCart);
++    uint32 visual = BG_SM_CONTROL_VISUAL_NEUTRAL;
++    if (keeper == ALLIANCE)
++        visual = BG_SM_CONTROL_VISUAL_ALLIANCE;
++    else if (keeper == HORDE)
++        visual = BG_SM_CONTROL_VISUAL_HORDE;
++
++    if (cart->HasAura(visual))
++        return;
++
++    cart->RemoveAurasDueToSpell(BG_SM_CONTROL_VISUAL_NEUTRAL);
++    cart->RemoveAurasDueToSpell(BG_SM_CONTROL_VISUAL_ALLIANCE);
++    cart->RemoveAurasDueToSpell(BG_SM_CONTROL_VISUAL_HORDE);
++    cart->CastSpell(cart, visual, true);
++
++    if (keeper == ALLIANCE)
++        SendMessageToAll(LANG_BG_SM_ALLIANCE_CONTROLLED_MINE_CART, ChatMsg::CHAT_MSG_BG_SYSTEM_ALLIANCE);
++    else if (keeper == HORDE)
++        SendMessageToAll(LANG_BG_SM_HORDE_CONTROLLED_MINE_CART, ChatMsg::CHAT_MSG_BG_SYSTEM_HORDE);
++}
++
++uint32 BattlegroundSM::GetMineCartTeamKeeper(uint8 mineCart) const
++{
++    if (m_mineCartsProgressBar[mineCart] > BG_SM_PROGRESS_BAR_NEUTRAL)
++        return ALLIANCE;
++
++    if (m_mineCartsProgressBar[mineCart] < BG_SM_PROGRESS_BAR_NEUTRAL)
++        return HORDE;
++
++    return 0;
++}
++
++void BattlegroundSM::CheckTrackSwitch(uint8 track, uint32 diff)
++{
++    Creature* trackSwitch = GetBgMap()->GetCreature(BgCreatures[SM_TRACK_SWITCH_EAST + track]);
++    if (!trackSwitch)
++        return;
++
++    if (m_trackSwitchCanInteract[track])
++    {
++        bool opened = trackSwitch->HasAura(BG_SM_TRACK_SWITCH_OPENED);
++        if (opened == m_trackSwitchOpened[track])
++            return;
++
++        SendMessageToAll(track == SM_EAST_TRACK_SWITCH ? LANG_BG_SM_EAST_DIRECTION_CHANGED : LANG_BG_SM_NORTH_DIRECTION_CHANGED, ChatMsg::CHAT_MSG_BG_SYSTEM_NEUTRAL);
++        m_trackSwitchOpened[track] = opened;
++        m_trackSwitchClickTimer[track] = BG_SM_TRACK_SWITCH_COOLDOWN;
++        m_trackSwitchCanInteract[track] = false;
++    }
++    else if ((m_trackSwitchClickTimer[track] -= diff) <= 0)
++    {
++        trackSwitch->RemoveAurasDueToSpell(BG_SM_PREVENTION_AURA);
++        m_trackSwitchCanInteract[track] = true;
++    }
++}
++
++// Switches are clicked through spell 97372 (see Spell::EffectDummy), the click flips the track
++void BattlegroundSM::EventPlayerClickedOnFlag(Player* player, Unit* target)
++{
++    if (GetStatus() != STATUS_IN_PROGRESS || !player || !target)
++        return;
++
++    if (target->GetEntry() != NPC_TRACK_SWITCH || target->HasAura(BG_SM_PREVENTION_AURA))
++        return;
++
++    target->CastSpell(target, BG_SM_PREVENTION_AURA, true);
++
++    if (target->HasAura(BG_SM_TRACK_SWITCH_OPENED))
++    {
++        target->RemoveAurasDueToSpell(BG_SM_TRACK_SWITCH_OPENED);
++        target->CastSpell(target, BG_SM_TRACK_SWITCH_CLOSED, true);
++    }
++    else
++    {
++        target->RemoveAurasDueToSpell(BG_SM_TRACK_SWITCH_CLOSED);
++        target->CastSpell(target, BG_SM_TRACK_SWITCH_OPENED, true);
++    }
++}
++
++void BattlegroundSM::MineCartsMoves()
++{
++    for (uint8 i = 0; i < SM_MINE_CART_MAX; ++i)
++    {
++        Creature* cart = GetMineCart(i);
++        if (!cart)
++            continue;
++
++        if (m_mineCartPathStage[i] == 0)
++        {
++            cart->GetMotionMaster()->MovePath(BG_SM_FirstLegPaths[i], false);
++            m_mineCartPathStage[i] = 1;
++            continue;
++        }
++
++        // The waterfall cart has a single leg, the other two choose their second leg at their track switch
++        if (m_mineCartPathStage[i] != 1 || i == BG_SM_MINE_CART_2)
++            continue;
++
++        uint8 track = (i == BG_SM_MINE_CART_1) ? SM_EAST_TRACK_SWITCH : SM_NORTH_TRACK_SWITCH;
++        if (cart->GetExactDist2d(BG_SM_TrackJunctionPos[track][0], BG_SM_TrackJunctionPos[track][1]) >= 0.5f)
++            continue;
++
++        Creature* trackSwitch = GetBgMap()->GetCreature(BgCreatures[SM_TRACK_SWITCH_EAST + track]);
++        if (!trackSwitch)
++            continue;
++
++        bool opened = trackSwitch->HasAura(BG_SM_TRACK_SWITCH_OPENED);
++        uint32 path;
++        if (track == SM_EAST_TRACK_SWITCH)
++            path = opened ? BG_SM_PATH_EAST_SWITCH_OPENED : BG_SM_PATH_EAST_SWITCH_CLOSED;
++        else
++            path = opened ? BG_SM_PATH_NORTH_SWITCH_OPENED : BG_SM_PATH_NORTH_SWITCH_CLOSED;
++
++        cart->GetMotionMaster()->Clear(true);
++        cart->GetMotionMaster()->MovePath(path, false);
++        m_mineCartPathStage[i] = 2;
++    }
++}
++
++void BattlegroundSM::CheckMineCartNearDepot()
++{
++    for (uint8 i = 0; i < SM_MINE_CART_MAX; ++i)
++    {
++        if (m_mineCartDepot[i] != SM_NO_DEPOT)
++            continue;
++
++        Creature* cart = GetMineCart(i);
++        if (!cart)
++            continue;
++
++        for (uint8 j = 0; j < 2; ++j)
++        {
++            uint8 depot = BG_SM_CartDepots[i][j];
++            if (depot == SM_NO_DEPOT)
++                continue;
++
++            if (cart->GetExactDist2d(BG_SM_DepotPos[depot][0], BG_SM_DepotPos[depot][1]) <= float(BG_SM_DEPOT_RANGE))
++            {
++                EventTeamCapturedMineCart(GetMineCartTeamKeeper(i), i, depot);
++                break;
++            }
++        }
++    }
++}
++
++// The cart stopped at a depot, the team keeping it gets the honor and the depot opens for a moment
++void BattlegroundSM::EventTeamCapturedMineCart(uint32 team, uint8 mineCart, uint8 depot)
++{
++    Creature* cart = GetMineCart(mineCart);
++    if (!cart)
++        return;
++
++    if (team)
++    {
++        for (BattlegroundPlayerMap::const_iterator itr = GetPlayers().begin(); itr != GetPlayers().end(); ++itr)
++        {
++            Player* player = ObjectAccessor::FindPlayer(itr->first);
++            if (!player || player->GetBGTeam() != team || !player->IsWithinDist(cart, float(BG_SM_CART_CONTROL_RANGE)))
++                continue;
++
++            UpdatePlayerScore(player, SCORE_CART_CONTROLLED, 1);
++            UpdatePlayerScore(player, SCORE_BONUS_HONOR, irand(10, 12));
++            player->UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_BG_OBJECTIVE_CAPTURE, OBJECTIVE_CAPTURE_MINE_CART, 1);
++        }
++    }
++
++    cart->StopMoving();
++    if (GameObject* depotObject = GetBgMap()->GetGameObject(BgObjects[BG_SM_OBJECT_WATERFALL_DEPOT + depot]))
++        depotObject->UseDoorOrButton();
++
++    m_mineCartDepot[mineCart] = depot;
++    m_depotCloseTimer[mineCart] = BG_SM_DEPOT_CLOSE_TIME;
++}
++
++void BattlegroundSM::EventReopenDepot(uint32 diff)
++{
++    for (uint8 i = 0; i < SM_MINE_CART_MAX; ++i)
++    {
++        uint8 depot = m_mineCartDepot[i];
++        if (depot == SM_NO_DEPOT)
++            continue;
++
++        if ((m_depotCloseTimer[i] -= diff) > 0)
++            continue;
++
++        uint32 keeper = GetMineCartTeamKeeper(i);
++        m_mineCartDepot[i] = SM_NO_DEPOT;
++        m_mineCartsProgressBar[i] = BG_SM_PROGRESS_BAR_NEUTRAL;
++
++        if (GameObject* depotObject = GetBgMap()->GetGameObject(BgObjects[BG_SM_OBJECT_WATERFALL_DEPOT + depot]))
++            depotObject->ResetDoorOrButton();
++
++        DelCreature(NPC_SM_MINE_CART_1 + i);
++
++        if (keeper == ALLIANCE)
++        {
++            SendMessageToAll(LANG_BG_SM_ALLIANCE_CAPTURED_MINE_CART, ChatMsg::CHAT_MSG_BG_SYSTEM_ALLIANCE);
++            PlaySoundToAll(BG_SM_SOUND_MINE_CART_CAPTURED_ALLIANCE);
++        }
++        else if (keeper == HORDE)
++        {
++            SendMessageToAll(LANG_BG_SM_HORDE_CAPTURED_MINE_CART, ChatMsg::CHAT_MSG_BG_SYSTEM_HORDE);
++            PlaySoundToAll(BG_SM_SOUND_MINE_CART_CAPTURED_HORDE);
++        }
++
++        // Nobody kept the cart, no points
++        if (keeper)
++            AddPoints(keeper, BG_SM_POINTS_PER_MINE_CART);
++    }
++}
++
++// Every second each cart gives a point to the team keeping it
++void BattlegroundSM::MineCartAddPoints(uint32 diff)
++{
++    if (m_mineCartAddPointsTimer > diff)
++    {
++        m_mineCartAddPointsTimer -= diff;
++        return;
++    }
++
++    uint32 allianceCount = 0;
++    uint32 hordeCount = 0;
++    for (uint8 i = 0; i < SM_MINE_CART_MAX; ++i)
++    {
++        uint32 keeper = GetMineCartTeamKeeper(i);
++        if (keeper == ALLIANCE)
++            ++allianceCount;
++        else if (keeper == HORDE)
++            ++hordeCount;
++    }
++
++    m_mineCartAddPointsTimer = IN_MILLISECONDS;
++
++    if (allianceCount)
++        AddPoints(ALLIANCE, allianceCount);
++
++    if (hordeCount)
++        AddPoints(HORDE, hordeCount);
++}
++
++void BattlegroundSM::AddPoints(uint32 team, uint32 points)
++{
++    if (GetStatus() != STATUS_IN_PROGRESS)
++        return;
++
++    TeamId teamIndex = GetTeamIndexByTeamId(team);
++    m_TeamScores[teamIndex] = std::min<int32>(m_TeamScores[teamIndex] + points, BG_SM_MAX_TEAM_SCORE);
++    m_HonorScoreTics[teamIndex] += points;
++
++    if (m_HonorScoreTics[teamIndex] >= m_honorTicks)
++    {
++        RewardHonorToTeam(GetBonusHonorFromKill(6), team);
++        m_HonorScoreTics[teamIndex] -= m_honorTicks;
++    }
++
++    UpdateTeamScore(team);
++}
++
++void BattlegroundSM::UpdateTeamScore(uint32 team)
++{
++    uint32 score = m_TeamScores[GetTeamIndexByTeamId(team)];
++    if (!m_isInformedNearVictory && score >= BG_SM_WARNING_NEAR_VICTORY_SCORE)
++    {
++        SendMessageToAll(team == ALLIANCE ? LANG_BG_SM_A_NEAR_VICTORY : LANG_BG_SM_H_NEAR_VICTORY, ChatMsg::CHAT_MSG_BG_SYSTEM_NEUTRAL);
++        PlaySoundToAll(BG_SM_SOUND_NEAR_VICTORY);
++        m_isInformedNearVictory = true;
++    }
++
++    UpdateWorldState(team == ALLIANCE ? SM_ALLIANCE_RESOURCES : SM_HORDE_RESOURCES, score);
++
++    if (score >= BG_SM_MAX_TEAM_SCORE)
++        EndBattleground(team);
++}
++
++void BattlegroundSM::EndBattleground(uint32 winner)
++{
++    if (winner == ALLIANCE || winner == HORDE)
++    {
++        RewardHonorToTeam(GetBonusHonorFromKill(m_HonorWinKills), winner);
++
++        for (BattlegroundPlayerMap::const_iterator itr = GetPlayers().begin(); itr != GetPlayers().end(); ++itr)
++            if (itr->second.Team == winner)
++                if (Player* player = ObjectAccessor::FindPlayer(itr->first))
++                    player->KilledMonsterCredit(NPC_SILVERSHARD_MINES_CREDIT);
++    }
++
++    // Complete map_end rewards (even if no team wins)
++    RewardHonorToTeam(GetBonusHonorFromKill(m_HonorEndKills), ALLIANCE);
++    RewardHonorToTeam(GetBonusHonorFromKill(m_HonorEndKills), HORDE);
++
++    for (uint8 i = 0; i < SM_MINE_CART_MAX; ++i)
++        DelCreature(NPC_SM_MINE_CART_1 + i);
++
++    Battleground::EndBattleground(winner);
++}
++
++WorldSafeLocsEntry const* BattlegroundSM::GetClosestGraveYard(Player* player)
++{
++    return sWorldSafeLocsStore.LookupEntry(player->GetBGTeam() == ALLIANCE ? SM_GRAVEYARD_MAIN_ALLIANCE : SM_GRAVEYARD_MAIN_HORDE);
++}
++
++void BattlegroundSM::UpdatePlayerScore(Player* player, uint32 type, uint32 value, bool doAddHonor)
++{
++    BattlegroundScoreMap::iterator itr = PlayerScores.find(player->GetGUID());
++    if (itr == PlayerScores.end())
++        return;
++
++    switch (type)
++    {
++        case SCORE_CART_CONTROLLED:
++            ((BattlegroundSMScore*)itr->second)->MineCartCaptures += value;
++            break;
++        default:
++            Battleground::UpdatePlayerScore(player, type, value, doAddHonor);
++            break;
++    }
++}
++
++void BattlegroundSM::FillInitialWorldStates(WorldStateBuilder& builder)
++{
++    builder.AppendState(SM_MINE_CARTS_DISPLAY, DISPLAY_WORLDSTATE);
++    builder.AppendState(SM_ALLIANCE_RESOURCES, m_TeamScores[TEAM_ALLIANCE]);
++    builder.AppendState(SM_HORDE_RESOURCES, m_TeamScores[TEAM_HORDE]);
++    builder.AppendState(SM_MINE_CART_1, DISPLAY_WORLDSTATE);
++    builder.AppendState(SM_MINE_CART_2, DISPLAY_WORLDSTATE);
++    builder.AppendState(SM_DISPLAY_ALLIANCE_RESSOURCES, DISPLAY_WORLDSTATE);
++    builder.AppendState(SM_MINE_CART_3, DISPLAY_WORLDSTATE);
++    builder.AppendState(SM_DISPLAY_HORDE_RESSOURCES, DISPLAY_WORLDSTATE);
++    builder.AppendState(SM_DISPLAY_PROGRESS_BAR, BG_SM_PROGRESS_BAR_DONT_SHOW);     // shows the mine cart control bar
++    builder.AppendState(SM_PROGRESS_BAR_STATUS, BG_SM_PROGRESS_BAR_NEUTRAL);
++    builder.AppendState(SM_UNK, 0);
++}
+diff --git a/src/server/game/Battlegrounds/Zones/BattlegroundSM.h b/src/server/game/Battlegrounds/Zones/BattlegroundSM.h
+new file mode 100644
+index 0000000000..473cf932a5
+--- /dev/null
++++ b/src/server/game/Battlegrounds/Zones/BattlegroundSM.h
+@@ -0,0 +1,299 @@
++/*
++* This file is part of the Pandaria 5.4.8 Project. See THANKS file for Copyright information
++*
++* This program is free software; you can redistribute it and/or modify it
++* under the terms of the GNU General Public License as published by the
++* Free Software Foundation; either version 2 of the License, or (at your
++* option) any later version.
++*
++* This program is distributed in the hope that it will be useful, but WITHOUT
++* ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++* FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
++* more details.
++*
++* You should have received a copy of the GNU General Public License along
++* with this program. If not, see <http://www.gnu.org/licenses/>.
++*/
++
++#ifndef SF_BATTLEGROUNDSM_H
++#define SF_BATTLEGROUNDSM_H
++
++#include "Battleground.h"
++
++enum BG_SM_WorldStates
++{
++    SM_MINE_CARTS_DISPLAY            = 6436,
++    SM_ALLIANCE_RESOURCES            = 6437,
++    SM_HORDE_RESOURCES               = 6438,
++    SM_MINE_CART_1                   = 6439,
++    SM_MINE_CART_2                   = 6440,
++    SM_DISPLAY_ALLIANCE_RESSOURCES   = 6441,
++    SM_MINE_CART_3                   = 6442,
++    SM_DISPLAY_HORDE_RESSOURCES      = 6443,
++    SM_DISPLAY_PROGRESS_BAR          = 6875, // 0 = false, 1 = true
++    SM_PROGRESS_BAR_STATUS           = 6876, // 0 = Horde max, 50 = Neutral, 100 = Alliance max
++    SM_UNK                           = 6877
++};
++
++enum BG_SM_MineCarts
++{
++    BG_SM_MINE_CART_1 = 0,                  // east track, ends at the Lava or the Diamond depot
++    BG_SM_MINE_CART_2 = 1,                  // waterfall, ends at the Waterfall depot
++    BG_SM_MINE_CART_3 = 2,                  // north track, ends at the Diamond or the Troll depot
++    SM_MINE_CART_MAX  = 3
++};
++
++enum BG_SM_ProgressBarConsts
++{
++    BG_SM_PROGRESS_BAR_DONT_SHOW  = 0,
++    BG_SM_PROGRESS_BAR_SHOW       = 1,
++    BG_SM_PROGRESS_BAR_NEUTRAL    = 50,
++    BG_SM_PROGRESS_BAR_MAX        = 100
++};
++
++enum BG_SM_Sounds
++{
++    BG_SM_SOUND_MINE_CART_CAPTURED_HORDE     = 8213,
++    BG_SM_SOUND_MINE_CART_CAPTURED_ALLIANCE  = 8173,
++    BG_SM_SOUND_NEAR_VICTORY                 = 8456,
++    BG_SM_SOUND_MINE_CART_SPAWNED            = 8174
++};
++
++enum BG_SM_Spells
++{
++    BG_SM_CONTROL_VISUAL_ALLIANCE   = 116086,
++    BG_SM_CONTROL_VISUAL_HORDE      = 116085,
++    BG_SM_CONTROL_VISUAL_NEUTRAL    = 118001,
++    BG_SM_TRACK_SWITCH_OPENED       = 120228,
++    BG_SM_TRACK_SWITCH_CLOSED       = 120229,
++    BG_SM_FEIGN_DEATH_STUN          = 135781, // Prevent from turn moves
++    BG_SM_PREVENTION_AURA           = 135846  // Prevent from using multiple times track switches
++};
++
++enum SMBattlegroundObjectEntry
++{
++    BG_SM_WATERFALL_DEPOT   = 212080,
++    BG_SM_LAVA_DEPOT        = 212081,
++    BG_SM_DIAMOND_DEPOT     = 212082,
++    BG_SM_TROLL_DEPOT       = 212083,
++    BG_SM_DOOR              = 157819
++};
++
++enum SMBattlegroundGraveyards
++{
++    SM_GRAVEYARD_MAIN_ALLIANCE     = 4062,
++    SM_GRAVEYARD_MAIN_HORDE        = 4061
++};
++
++enum SMBattlegroundCreaturesTypes
++{
++    SM_SPIRIT_ALLIANCE        = 0,
++    SM_SPIRIT_HORDE           = 1,
++    NPC_SM_MINE_CART_1        = 2,          // the three carts use consecutive slots
++    NPC_SM_MINE_CART_2        = 3,
++    NPC_SM_MINE_CART_3        = 4,
++    SM_TRACK_SWITCH_EAST      = 5,
++    SM_TRACK_SWITCH_NORTH     = 6,
++
++    BG_SM_CREATURES_MAX       = 7
++};
++
++enum SMDepots
++{
++    SM_WATERFALL_DEPOT,
++    SM_LAVA_DEPOT,
++    SM_DIAMOND_DEPOT,
++    SM_TROLL_DEPOT,
++    SM_DEPOT_MAX,
++    SM_NO_DEPOT
++};
++
++enum SMTracks
++{
++    SM_EAST_TRACK_SWITCH,
++    SM_NORTH_TRACK_SWITCH,
++    SM_MAX_TRACK_SWITCH
++};
++
++enum SMBattlegroundObjectTypes
++{
++    BG_SM_OBJECT_DOOR_A_1                   = 0,
++    BG_SM_OBJECT_DOOR_H_1                   = 1,
++    BG_SM_OBJECT_DOOR_A_2                   = 2,
++    BG_SM_OBJECT_DOOR_H_2                   = 3,
++    BG_SM_OBJECT_WATERFALL_DEPOT            = 4,    // the four depots use consecutive slots
++    BG_SM_OBJECT_LAVA_DEPOT                 = 5,
++    BG_SM_OBJECT_DIAMOND_DEPOT              = 6,
++    BG_SM_OBJECT_TROLL_DEPOT                = 7,
++    BG_SM_OBJECT_BERSERKING_BUFF_EAST       = 8,
++    BG_SM_OBJECT_BERSERKING_BUFF_WEST       = 9,
++    BG_SM_OBJECT_RESTORATION_BUFF_WATERFALL = 10,
++    BG_SM_OBJECT_RESTORATION_BUFF_LAVA      = 11,
++
++    BG_SM_OBJECT_MAX                        = 12
++};
++
++enum BG_SM_Score
++{
++    BG_SM_WARNING_NEAR_VICTORY_SCORE    = 1400,
++    BG_SM_MAX_TEAM_SCORE                = 1600
++};
++
++enum BG_SM_CreatureIds
++{
++    NPC_TRACK_SWITCH         = 60283,
++    NPC_MINE_CART_1          = 60378,
++    NPC_MINE_CART_2          = 60379,
++    NPC_MINE_CART_3          = 60380
++};
++
++// Waypoint paths of the carts. The east and the north cart ride a first leg to their track switch and then
++// the leg the switch is set to.
++enum BG_SM_Paths
++{
++    BG_SM_PATH_EAST_FIRST_LEG       = 7270011,
++    BG_SM_PATH_EAST_SWITCH_OPENED   = 7270012,  // to the Lava depot
++    BG_SM_PATH_EAST_SWITCH_CLOSED   = 7270013,  // to the Diamond depot
++    BG_SM_PATH_WATERFALL            = 7270021,
++    BG_SM_PATH_NORTH_FIRST_LEG      = 7270031,
++    BG_SM_PATH_NORTH_SWITCH_CLOSED  = 7270032,  // to the Troll depot
++    BG_SM_PATH_NORTH_SWITCH_OPENED  = 7270033   // to the Diamond depot
++};
++
++enum BG_SM_Misc
++{
++    BG_SM_POINTS_PER_MINE_CART          = 150,
++    BG_SM_CART_CONTROL_RANGE            = 22,
++    BG_SM_DEPOT_RANGE                   = 6,
++    BG_SM_DEPOT_CLOSE_TIME              = 3000,
++    BG_SM_TRACK_SWITCH_COOLDOWN         = 3000,
++    BG_SM_NOT_SMWEEKEND_HONOR_TICKS     = 200,
++    BG_SM_SMWEEKEND_HONOR_TICKS         = 130,
++    DISPLAY_WORLDSTATE                  = 1
++};
++
++float const BG_SM_BuffPos[4][4] =
++{
++    { 749.444153f, 64.338188f,  369.535797f, 6.058259f },  // Berserking buff East
++    { 789.979431f, 281.883575f, 355.389984f, 0.652173f },  // Berserking buff West
++    { 539.873596f, 396.386749f, 345.722412f, 3.994188f },  // Restoration buff Waterfall
++    { 614.202698f, 120.924660f, 294.430908f, 4.241807f }   // Restoration buff Lava
++};
++
++float const BG_SM_DepotPos[SM_DEPOT_MAX][4] =
++{
++    { 566.950989f, 337.05801f,  347.295013f, 1.559089f }, // Waterfall
++    { 619.469971f, 79.719597f,  299.067993f, 1.625564f }, // Lava
++    { 895.974426f, 27.210802f,  364.390991f, 3.445790f }, // Diamond
++    { 778.444946f, 500.949707f, 359.738983f, 0.737040f }  // Troll
++};
++
++float const BG_SM_DoorPos[4][4] =
++{
++    { 852.0289952f, 158.216003f,  326.761011f, 0.150758f }, // Alliance 1
++    { 830.092102f,  143.925507f,  326.5f,      3.130245f }, // Alliance 2
++    { 652.177612f,  228.493423f,  326.917480f, 0.163844f }, // Horde 1
++    { 635.622925f,  208.220886f,  326.648315f, 3.717332f }  // Horde 2
++};
++
++float const BG_SM_TrackPos[SM_MAX_TRACK_SWITCH][4] =
++{
++    { 715.585388f, 101.272034f, 319.994690f, 4.647377f }, // East
++    { 847.481689f, 308.032562f, 346.573242f, 0.587086f }  // North
++};
++
++// Where the first leg of the east and the north cart ends, the carts pick their second leg there
++float const BG_SM_TrackJunctionPos[SM_MAX_TRACK_SWITCH][2] =
++{
++    { 717.169312f, 114.258339f }, // East
++    { 834.727234f, 299.809753f }  // North
++};
++
++float const BG_SM_StartPos[SM_MINE_CART_MAX][4] =
++{
++    { 744.542053f, 183.545883f, 319.658203f, 4.356342f },
++    { 739.400330f, 203.598511f, 319.603333f, 2.308198f },
++    { 760.184509f, 198.844742f, 319.446655f, 0.351249f }
++};
++
++uint32 const BG_SM_CartIDs[SM_MINE_CART_MAX] =
++{
++    NPC_MINE_CART_1,
++    NPC_MINE_CART_2,
++    NPC_MINE_CART_3
++};
++
++// Depots a cart can end at, the second one depends on the track switch
++uint8 const BG_SM_CartDepots[SM_MINE_CART_MAX][2] =
++{
++    { SM_LAVA_DEPOT,      SM_DIAMOND_DEPOT },
++    { SM_WATERFALL_DEPOT, SM_NO_DEPOT },
++    { SM_DIAMOND_DEPOT,   SM_TROLL_DEPOT }
++};
++
++struct BattlegroundSMScore : public BattlegroundScore
++{
++    BattlegroundSMScore() : BattlegroundScore(), MineCartCaptures(0) { }
++    virtual ~BattlegroundSMScore() { }
++
++    uint32 MineCartCaptures;
++};
++
++class BattlegroundSM : public Battleground
++{
++public:
++    BattlegroundSM();
++    ~BattlegroundSM();
++
++    /* inherited from BattlegroundClass */
++    void AddPlayer(Player* player) OVERRIDE;
++    void StartingEventCloseDoors() OVERRIDE;
++    void StartingEventOpenDoors() OVERRIDE;
++
++    bool SetupBattleground() OVERRIDE;
++    void Reset() OVERRIDE;
++    WorldSafeLocsEntry const* GetClosestGraveYard(Player* player) OVERRIDE;
++    void UpdatePlayerScore(Player* source, uint32 type, uint32 value, bool doAddHonor = true) OVERRIDE;
++    void FillInitialWorldStates(WorldStateBuilder& builder) OVERRIDE;
++    void EventPlayerClickedOnFlag(Player* player, Unit* target) OVERRIDE;
++
++    void EndBattleground(uint32 winner);
++
++private:
++    void PostUpdateImpl(uint32 diff) OVERRIDE;
++
++    Creature* GetMineCart(uint8 mineCart);
++    void SpawnMineCart(uint8 mineCart, bool announce);
++    void UpdateCartControl();
++    void UpdateCartVisual(uint8 mineCart);
++    void CheckTrackSwitch(uint8 track, uint32 diff);
++    void MineCartsMoves();
++    void CheckMineCartNearDepot();
++    void EventTeamCapturedMineCart(uint32 team, uint8 mineCart, uint8 depot);
++    void EventReopenDepot(uint32 diff);
++    void MineCartAddPoints(uint32 diff);
++    uint32 GetMineCartTeamKeeper(uint8 mineCart) const;
++
++    /* Scorekeeping */
++    void AddPoints(uint32 team, uint32 points);
++    void UpdateTeamScore(uint32 team);
++
++    uint32 m_HonorScoreTics[BG_TEAMS_COUNT];
++    uint32 m_honorTicks;
++    uint32 m_HonorWinKills;
++    uint32 m_HonorEndKills;
++    uint32 m_mineCartAddPointsTimer;
++    int32 m_mineCartCheckTimer;
++    bool m_isInformedNearVictory;
++    bool m_mineCartsSpawned;
++
++    int32 m_mineCartsProgressBar[SM_MINE_CART_MAX];
++    uint8 m_mineCartPathStage[SM_MINE_CART_MAX];
++    uint8 m_mineCartDepot[SM_MINE_CART_MAX];                    // depot the cart stopped at, SM_NO_DEPOT while on the way
++    int32 m_depotCloseTimer[SM_MINE_CART_MAX];
++    int32 m_trackSwitchClickTimer[SM_MAX_TRACK_SWITCH];
++    bool m_trackSwitchOpened[SM_MAX_TRACK_SWITCH];
++    bool m_trackSwitchCanInteract[SM_MAX_TRACK_SWITCH];
++};
++
++#endif
+diff --git a/src/server/game/Entities/Player/Player.cpp b/src/server/game/Entities/Player/Player.cpp
+index acbda0c0eb..a8c4f9d45f 100644
+--- a/src/server/game/Entities/Player/Player.cpp
++++ b/src/server/game/Entities/Player/Player.cpp
+@@ -10584,6 +10584,11 @@ void Player::SendInitWorldStates(uint32 zoneid, uint32 areaid)
+             if (bg && bg->GetTypeID(true) == BattlegroundTypeId::BATTLEGROUND_VOP)
+                 bg->FillInitialWorldStates(builder);
+             break;
++            // Silvershard Mines
++        case 6126:
++            if (bg && bg->GetTypeID(true) == BattlegroundTypeId::BATTLEGROUND_SM)
++                bg->FillInitialWorldStates(builder);
++            break;
+             // Wintergrasp
+         case 4197:
+             if (bf && bf->GetTypeId() == BATTLEFIELD_WG)
+diff --git a/src/server/game/Miscellaneous/Language.h b/src/server/game/Miscellaneous/Language.h
+index 35a5552a65..a33a509e26 100644
+--- a/src/server/game/Miscellaneous/Language.h
++++ b/src/server/game/Miscellaneous/Language.h
+@@ -1273,5 +1273,20 @@ enum SkyFireStrings
+     LANG_BG_BFG_NODE_CLAIMED = 12027,
+     LANG_BG_BFG_A_NEAR_VICTORY = 12028,
+     LANG_BG_BFG_H_NEAR_VICTORY = 12029,
++
++    // Silvershard Mines
++    LANG_BG_SM_START_TWO_MINUTES = 12100,
++    LANG_BG_SM_START_ONE_MINUTE = 12101,
++    LANG_BG_SM_START_HALF_MINUTE = 12102,
++    LANG_BG_SM_HAS_BEGUN = 12103,
++    LANG_BG_SM_EAST_DIRECTION_CHANGED = 12104,
++    LANG_BG_SM_NORTH_DIRECTION_CHANGED = 12105,
++    LANG_BG_SM_MINE_CART_SPAWNED = 12106,
++    LANG_BG_SM_ALLIANCE_CONTROLLED_MINE_CART = 12107,
++    LANG_BG_SM_HORDE_CONTROLLED_MINE_CART = 12108,
++    LANG_BG_SM_ALLIANCE_CAPTURED_MINE_CART = 12109,
++    LANG_BG_SM_HORDE_CAPTURED_MINE_CART = 12110,
++    LANG_BG_SM_A_NEAR_VICTORY = 12111,
++    LANG_BG_SM_H_NEAR_VICTORY = 12112,
+ };
+ #endif
+diff --git a/src/server/game/Miscellaneous/SharedDefines.h b/src/server/game/Miscellaneous/SharedDefines.h
+index b23c406a99..24b1e68538 100644
+--- a/src/server/game/Miscellaneous/SharedDefines.h
++++ b/src/server/game/Miscellaneous/SharedDefines.h
+@@ -4178,10 +4178,11 @@ enum BattlegroundQueueTypeId
+     BATTLEGROUND_QUEUE_TP = 7,
+     BATTLEGROUND_QUEUE_BFG = 8,
+     BATTLEGROUND_QUEUE_VOP = 9,
+-    BATTLEGROUND_QUEUE_RB = 10,
+-    BATTLEGROUND_QUEUE_2v2 = 11,
+-    BATTLEGROUND_QUEUE_3v3 = 12,
+-    BATTLEGROUND_QUEUE_5v5 = 13,
++    BATTLEGROUND_QUEUE_SM = 10,
++    BATTLEGROUND_QUEUE_RB = 11,
++    BATTLEGROUND_QUEUE_2v2 = 12,
++    BATTLEGROUND_QUEUE_3v3 = 13,
++    BATTLEGROUND_QUEUE_5v5 = 14,
+     MAX_BATTLEGROUND_QUEUE_TYPES
+ };
+ 
+diff --git a/src/server/game/Spells/SpellEffectsScript.cpp b/src/server/game/Spells/SpellEffectsScript.cpp
+index 204cb200e5..d971c0d194 100644
+--- a/src/server/game/Spells/SpellEffectsScript.cpp
++++ b/src/server/game/Spells/SpellEffectsScript.cpp
+@@ -65,6 +65,12 @@ void Spell::EffectDummy(SpellEffIndex effIndex)
+     if (!unitTarget && !gameObjTarget && !itemTarget)
+         return;
+ 
++    // Capture points and track switches of the battlegrounds, 97388 is Capturing and 97372 is triggered by 124492
++    if (m_spellInfo->Id == 97388 || m_spellInfo->Id == 97372)
++        if (Player* player = m_caster->ToPlayer())
++            if (Battleground* bg = player->GetBattleground())
++                bg->EventPlayerClickedOnFlag(player, unitTarget);
++
+     uint32 spell_id = 0;
+     int32 bp = 0;
+     bool triggered = true;
+diff --git a/src/server/scripts/Spells/spell_generic.cpp b/src/server/scripts/Spells/spell_generic.cpp
+index 57d1ad9780..25a6b5b44c 100644
+--- a/src/server/scripts/Spells/spell_generic.cpp
++++ b/src/server/scripts/Spells/spell_generic.cpp
+@@ -644,6 +644,46 @@ class spell_gen_bandage : public SpellScriptLoader
+         }
+ };
+ 
++// 97388, 124492 - Capturing (battleground capture points and track switches)
++class spell_gen_bg_capturing : public SpellScriptLoader
++{
++    public:
++        spell_gen_bg_capturing() : SpellScriptLoader("spell_gen_bg_capturing") { }
++
++        class spell_gen_bg_capturing_SpellScript : public SpellScript
++        {
++            PrepareSpellScript(spell_gen_bg_capturing_SpellScript);
++
++            bool Load() OVERRIDE
++            {
++                GetCaster()->RemoveAurasByType(SPELL_AURA_MOUNTED);
++                return true;
++            }
++
++            SpellCastResult CheckCast()
++            {
++                Player* caster = GetCaster()->ToPlayer();
++                if (!caster || caster->isTotalImmune() || caster->GetTotalAuraModifier(SPELL_AURA_DEFLECT_SPELLS) >= 100)
++                    return SpellCastResult::SPELL_FAILED_TRY_AGAIN;
++
++                if (!GetSpell()->GetCastTime() && caster->IsNonMeleeSpellCasted(false, true, true))
++                    return SpellCastResult::SPELL_FAILED_SPELL_IN_PROGRESS;
++
++                return SpellCastResult::SPELL_CAST_OK;
++            }
++
++            void Register() OVERRIDE
++            {
++                OnCheckCast += SpellCheckCastFn(spell_gen_bg_capturing_SpellScript::CheckCast);
++            }
++        };
++
++        SpellScript* GetSpellScript() const OVERRIDE
++        {
++            return new spell_gen_bg_capturing_SpellScript();
++        }
++};
++
+ enum Bonked
+ {
+     SPELL_BONKED            = 62991,
+@@ -3782,6 +3822,7 @@ void AddSC_generic_spell_scripts()
+     new spell_gen_aura_service_uniform();
+     new spell_gen_av_drekthar_presence();
+     new spell_gen_bandage();
++    new spell_gen_bg_capturing();
+     new spell_gen_bonked();
+     new spell_gen_break_shield("spell_gen_break_shield");
+     new spell_gen_break_shield("spell_gen_tournament_counterattack");

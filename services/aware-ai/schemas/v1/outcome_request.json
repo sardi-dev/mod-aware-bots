@@ -1,0 +1,33 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "decision_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Decision Id",
+      "type": "string"
+    },
+    "details": {
+      "additionalProperties": true,
+      "title": "Details",
+      "type": "object"
+    },
+    "outcome": {
+      "pattern": "^[a-z][a-z0-9_]{0,63}$",
+      "title": "Outcome",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "decision_id",
+    "outcome"
+  ],
+  "title": "OutcomeRequest",
+  "type": "object"
+}

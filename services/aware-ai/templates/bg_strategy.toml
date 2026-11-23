@@ -1,0 +1,58 @@
+# Asked by the battleground leader of one side every 15 to 30 seconds and after a flag or node event: which of up to six
+# candidates should the team play now? The candidates travel as fixed slots (option_0 to option_5); the state's `candidates`
+# line says what each slot means in this request, best rule score first, so a cached answer can never point at another set.
+# The answer is a slot: the model returns a choice with probabilities and no free text, so the reason in the response is the
+# margin of the choice (reason_from_probabilities). Bump `version` whenever the wording or the vocabulary changes.
+name = "bg_strategy"
+version = 1
+feature = "pvp"
+cache_ttl_s = 12
+reason_from_probabilities = true
+
+intro = """
+Fantasy MMO (client 5.4.8) battleground, 10 against 10, random bots with a human or two. You advise the leader of our team.
+`decision` says what the slots choose between and `question` says it in words. Scores and flags are from our side: score is
+[ours, theirs]; time_left_s is the match clock; stance is what the team plays now. Nodes read ours, theirs, neutral, capping
+(we are capturing it), assault (they are capturing ours), flipped (they flipped it back). friendly_groups are our bots by job;
+observed_pressure is what call-outs and scouts say about enemies near our flag room or nodes. facts are short extra numbers.
+Candidates are listed best first by the rule-based plan: option_0 is the plan's own choice. Choose another slot only when the
+state gives a clear reason; with nothing clear, keep option_0.
+Words. Flag maps (stance): balanced = the normal split of takers, escorts, home guards and mid; offense = more attackers, fewer
+at home; defense = more at home, fewer attackers; all_in = behind late, home down to one, everybody else strikes; turtle =
+ahead late, everybody at home, only a pair to deny their flag. Floater (a spare healer): to_strike = join the attack because
+their attack is dead; to_home = reinforce the flag room; stay_cover = stay with the middle group. Wipe reply (our attack group
+died and is back): defend_first = run home and hold the entrances; push_now = their attack is dead too, go for the flag at
+once; regroup_lane = gather at our lane post and go again together. Node maps (stance): balanced, offense, defense as above;
+hold = ahead on the clock, keep what we have; push = behind on the clock, flip a node or deny; last_node = we hold one node
+against three or more, never lose it; panic = they are about to reach 1600 first, retake nodes at any cost. Target node: the
+node the assault group goes to take next; the list is the best three by swing per travel time.
+"""
+
+instructions = """
+Which slot is the best answer to the question for this team now? Judge like an experienced battleground player: the score and
+the clock, who holds what, where the pressure is, and how many of ours are alive. Answer with one slot.
+"""
+
+[[options]]
+name = "option_0"
+criteria = "Choose when the candidate listed as option_0 under candidates is the best answer (the rule-based plan's own choice)."
+
+[[options]]
+name = "option_1"
+criteria = "Choose when the candidate listed as option_1 under candidates is clearly better than option_0 for this match state."
+
+[[options]]
+name = "option_2"
+criteria = "Choose when the candidate listed as option_2 under candidates is clearly better than option_0 for this match state."
+
+[[options]]
+name = "option_3"
+criteria = "Choose when the candidate listed as option_3 under candidates is clearly better than option_0 for this match state."
+
+[[options]]
+name = "option_4"
+criteria = "Choose when the candidate listed as option_4 under candidates is clearly better than option_0 for this match state."
+
+[[options]]
+name = "option_5"
+criteria = "Choose when the candidate listed as option_5 under candidates is clearly better than option_0 for this match state."

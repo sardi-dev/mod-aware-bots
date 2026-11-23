@@ -1,0 +1,281 @@
+From deeeec031d1117f096630ea0cb6916e351f186d8 Mon Sep 17 00:00:00 2001
+From: sardi-dev <134648583+sardi-dev@users.noreply.github.com>
+Date: Thu, 19 Nov 2026 01:09:39 +0000
+Subject: [PATCH 22/25] Send the positions of flag and orb carriers
+
+The 5.4.8 client no longer asks for the carriers on the map, and the opcode
+the core used for them had no value, so the carriers never showed. Send
+the positions to the whole battleground every 5 seconds while a match runs,
+with the 5.4.8 layout, and clear the map once when the last carrier is
+gone. Temple of Kotmogu reports all four orb carriers, the other
+battlegrounds the flag carrier of each team.
+
+Based on Legends of Azeroth 5.4.8.
+---
+ .../game/Battlegrounds/Battleground.cpp       | 70 ++++++++++++++++
+ src/server/game/Battlegrounds/Battleground.h  | 10 +++
+ .../Battlegrounds/Zones/BattlegroundVOP.cpp   |  7 ++
+ .../Battlegrounds/Zones/BattlegroundVOP.h     |  1 +
+ .../game/Handlers/BattleGroundHandler.cpp     | 82 +------------------
+ src/server/game/Server/Protocol/Opcodes.cpp   |  2 +-
+ 6 files changed, 91 insertions(+), 81 deletions(-)
+
+diff --git a/src/server/game/Battlegrounds/Battleground.cpp b/src/server/game/Battlegrounds/Battleground.cpp
+index 30a96c182d..812e80d924 100644
+--- a/src/server/game/Battlegrounds/Battleground.cpp
++++ b/src/server/game/Battlegrounds/Battleground.cpp
+@@ -227,6 +227,15 @@ void Battleground::Update(uint32 diff)
+             }
+             else
+             {
++                // The client no longer asks for the positions of the carriers
++                if (m_FlagsPositionsTimer <= diff)
++                {
++                    SendFlagsPositions();
++                    m_FlagsPositionsTimer = uint32(PLAYER_POSITION_UPDATE_INTERVAL) * IN_MILLISECONDS;
++                }
++                else
++                    m_FlagsPositionsTimer -= diff;
++
+                 _ProcessRessurect(diff);
+                 if (!sBattlegroundMgr->isTesting() && sBattlegroundMgr->GetPrematureFinishTime() && (GetPlayersCountByTeam(ALLIANCE) < GetMinPlayersPerTeam() || GetPlayersCountByTeam(HORDE) < GetMinPlayersPerTeam()))
+                     _ProcessProgress(diff);
+@@ -701,6 +710,67 @@ void Battleground::RewardReputationToTeam(uint32 faction_id, uint32 Reputation,
+                 player->GetReputationMgr().ModifyReputation(factionEntry, Reputation);
+ }
+ 
++void Battleground::BuildFlagsPositionsPacket(WorldPacket* data)
++{
++    std::list<uint64> guids;
++    GetFlagCarriers(guids);
++
++    std::list<Player*> carriers;
++    for (std::list<uint64>::const_iterator itr = guids.begin(); itr != guids.end(); ++itr)
++        if (Player* player = ObjectAccessor::FindPlayer(*itr))
++            carriers.push_back(player);
++
++    ByteBuffer buffer;
++    data->Initialize(SMSG_BATTLEFIELD_PLAYER_POSITIONS);
++    data->WriteBits(carriers.size(), 20);
++
++    for (std::list<Player*>::const_iterator itr = carriers.begin(); itr != carriers.end(); ++itr)
++    {
++        Player* player = *itr;
++        ObjectGuid guid = player->GetGUID();
++        bool alliance = player->GetBGTeam() == ALLIANCE;
++
++        data->WriteBit(guid[1]);
++        data->WriteBit(guid[5]);
++        data->WriteBit(guid[0]);
++        data->WriteBit(guid[4]);
++        data->WriteBit(guid[6]);
++        data->WriteBit(guid[3]);
++        data->WriteBit(guid[7]);
++        data->WriteBit(guid[2]);
++
++        buffer.WriteByteSeq(guid[0]);
++        buffer.WriteByteSeq(guid[3]);
++        buffer.WriteByteSeq(guid[7]);
++        buffer << uint8(alliance ? 1 : 2);                  // team
++        buffer << float(player->GetPositionY());
++        buffer.WriteByteSeq(guid[4]);
++        buffer.WriteByteSeq(guid[2]);
++        buffer.WriteByteSeq(guid[1]);
++        buffer.WriteByteSeq(guid[5]);
++        buffer << float(player->GetPositionX());
++        buffer << uint8(alliance ? 3 : 2);                  // icon
++        buffer.WriteByteSeq(guid[6]);
++    }
++
++    data->FlushBits();
++    if (buffer.size())
++        data->append(buffer);
++}
++
++void Battleground::SendFlagsPositions()
++{
++    // An empty list is sent once when the last carrier is gone, to clear the map
++    WorldPacket data;
++    BuildFlagsPositionsPacket(&data);
++    bool any = data.size() > 3;
++    if (!any && !m_FlagsPositionsSent)
++        return;
++
++    m_FlagsPositionsSent = any;
++    SendPacketToAll(&data);
++}
++
+ void Battleground::UpdateWorldState(uint32 Field, uint32 Value)
+ {
+     WorldPacket data;
+diff --git a/src/server/game/Battlegrounds/Battleground.h b/src/server/game/Battlegrounds/Battleground.h
+index 7a00abbfac..3b7995ec4c 100644
+--- a/src/server/game/Battlegrounds/Battleground.h
++++ b/src/server/game/Battlegrounds/Battleground.h
+@@ -420,6 +420,8 @@ public:
+     virtual void FillInitialWorldStates(WorldStateBuilder& /*builder*/) { }
+     void SendPacketToTeam(uint32 TeamID, WorldPacket* packet, Player* sender = NULL, bool self = true);
+     void SendPacketToAll(WorldPacket* packet);
++    void BuildFlagsPositionsPacket(WorldPacket* data);
++    void SendFlagsPositions();
+     void YellToAll(Creature* creature, const char* text, Language language);
+ 
+     template<class Do>
+@@ -542,6 +544,12 @@ public:
+     bool CanAwardArenaPoints() const { return m_LevelMin >= BG_AWARD_ARENA_POINTS_MIN_LEVEL; }
+ 
+     virtual uint64 GetFlagPickerGUID(int32 /*team*/ = -1) const { return 0; }
++    virtual void GetFlagCarriers(std::list<uint64>& carriers) const
++    {
++        for (int32 team = TEAM_ALLIANCE; team <= TEAM_HORDE; ++team)
++            if (uint64 guid = GetFlagPickerGUID(team))
++                carriers.push_back(guid);
++    }
+     virtual void SetDroppedFlagGUID(uint64 /*guid*/, int32 /*team*/ = -1) { }
+     virtual void HandleQuestComplete(uint32 /*questid*/, Player* /*player*/) { }
+     virtual bool CanActivateGO(int32 /*entry*/, uint32 /*team*/) const { return true; }
+@@ -610,6 +618,8 @@ private:
+     uint8  m_Winner;                                    // 0=alliance, 1=horde, 2=none
+     int32  m_StartDelayTime;
+     bool   m_IsRated;                                   // is this battle rated?
++    uint32 m_FlagsPositionsTimer = 0;
++    bool m_FlagsPositionsSent = false;
+     bool   m_PrematureCountDown;
+     uint32 m_PrematureCountDownTimer;
+     char const* m_Name;
+diff --git a/src/server/game/Battlegrounds/Zones/BattlegroundVOP.cpp b/src/server/game/Battlegrounds/Zones/BattlegroundVOP.cpp
+index ecd12c4674..6c58bfdc47 100644
+--- a/src/server/game/Battlegrounds/Zones/BattlegroundVOP.cpp
++++ b/src/server/game/Battlegrounds/Zones/BattlegroundVOP.cpp
+@@ -446,6 +446,13 @@ void BattlegroundVOP::FillInitialWorldStates(WorldStateBuilder& builder)
+         builder.AppendState(BG_VOP_OrbWorldStates[i], m_OrbKeepers[i] ? 0 : 1);
+ }
+ 
++void BattlegroundVOP::GetFlagCarriers(std::list<uint64>& carriers) const
++{
++    for (uint8 i = 0; i < BG_VOP_MAX_ORBS; ++i)
++        if (m_OrbKeepers[i])
++            carriers.push_back(m_OrbKeepers[i]);
++}
++
+ uint32 BattlegroundVOP::GetPrematureWinner()
+ {
+     if (GetTeamScore(TEAM_ALLIANCE) > GetTeamScore(TEAM_HORDE))
+diff --git a/src/server/game/Battlegrounds/Zones/BattlegroundVOP.h b/src/server/game/Battlegrounds/Zones/BattlegroundVOP.h
+index 064ac893d9..93da9f2d41 100644
+--- a/src/server/game/Battlegrounds/Zones/BattlegroundVOP.h
++++ b/src/server/game/Battlegrounds/Zones/BattlegroundVOP.h
+@@ -144,6 +144,7 @@ public:
+     void FillInitialWorldStates(WorldStateBuilder& builder) OVERRIDE;
+     uint32 GetPrematureWinner() OVERRIDE;
+     void PostUpdateImpl(uint32 diff) OVERRIDE;
++    void GetFlagCarriers(std::list<uint64>& carriers) const OVERRIDE;
+ 
+     void ReleaseOrb(Player* player);
+ 
+diff --git a/src/server/game/Handlers/BattleGroundHandler.cpp b/src/server/game/Handlers/BattleGroundHandler.cpp
+index bdac357c49..a40e13ecbe 100644
+--- a/src/server/game/Handlers/BattleGroundHandler.cpp
++++ b/src/server/game/Handlers/BattleGroundHandler.cpp
+@@ -254,86 +254,8 @@ void WorldSession::HandleBattlegroundPlayerPositionsOpcode(WorldPacket& /*recvDa
+     if (!bg)                                                 // can't be received if player not in battleground
+         return;
+ 
+-    uint32 acount = 0;
+-    uint32 hcount = 0;
+-    Player* aplr = NULL;
+-    Player* hplr = NULL;
+-
+-    if (uint64 guid = bg->GetFlagPickerGUID(TEAM_ALLIANCE))
+-    {
+-        aplr = ObjectAccessor::FindPlayer(guid);
+-        if (aplr)
+-            ++acount;
+-    }
+-
+-    if (uint64 guid = bg->GetFlagPickerGUID(TEAM_HORDE))
+-    {
+-        hplr = ObjectAccessor::FindPlayer(guid);
+-        if (hplr)
+-            ++hcount;
+-    }
+-
+-    ObjectGuid aguid = aplr ? aplr->GetGUID() : 0;
+-    ObjectGuid hguid = hplr ? hplr->GetGUID() : 0;
+-
+-    WorldPacket data(SMSG_BATTLEFIELD_PLAYER_POSITIONS);
+-
+-    data.WriteBits(acount, 22);
+-    for (uint8 i = 0; i < acount; i++)
+-    {
+-        data.WriteBit(aguid[3]);
+-        data.WriteBit(aguid[5]);
+-        data.WriteBit(aguid[1]);
+-        data.WriteBit(aguid[6]);
+-        data.WriteBit(aguid[7]);
+-        data.WriteBit(aguid[0]);
+-        data.WriteBit(aguid[2]);
+-        data.WriteBit(aguid[4]);
+-    }
+-
+-    data.WriteBits(hcount, 22);
+-    for (uint8 i = 0; i < hcount; i++)
+-    {
+-        data.WriteBit(hguid[6]);
+-        data.WriteBit(hguid[5]);
+-        data.WriteBit(hguid[4]);
+-        data.WriteBit(hguid[7]);
+-        data.WriteBit(hguid[2]);
+-        data.WriteBit(hguid[1]);
+-        data.WriteBit(hguid[0]);
+-        data.WriteBit(hguid[3]);
+-    }
+-
+-    data.FlushBits();
+-
+-    for (uint8 i = 0; i < hcount; i++)
+-    {
+-        data.WriteByteSeq(hguid[2]);
+-        data.WriteByteSeq(hguid[1]);
+-        data << float(hplr->GetPositionY());
+-        data.WriteByteSeq(hguid[5]);
+-        data.WriteByteSeq(hguid[4]);
+-        data.WriteByteSeq(hguid[7]);
+-        data.WriteByteSeq(hguid[0]);
+-        data.WriteByteSeq(hguid[6]);
+-        data.WriteByteSeq(hguid[3]);
+-        data << float(hplr->GetPositionX());
+-    }
+-
+-    for (uint8 i = 0; i < acount; i++)
+-    {
+-        data.WriteByteSeq(aguid[6]);
+-        data << float(aplr->GetPositionX());
+-        data.WriteByteSeq(aguid[5]);
+-        data.WriteByteSeq(aguid[3]);
+-        data << float(aplr->GetPositionY());
+-        data.WriteByteSeq(aguid[1]);
+-        data.WriteByteSeq(aguid[7]);
+-        data.WriteByteSeq(aguid[0]);
+-        data.WriteByteSeq(aguid[2]);
+-        data.WriteByteSeq(aguid[4]);
+-    }
+-
++    WorldPacket data;
++    bg->BuildFlagsPositionsPacket(&data);
+     SendPacket(&data);
+ }
+ 
+diff --git a/src/server/game/Server/Protocol/Opcodes.cpp b/src/server/game/Server/Protocol/Opcodes.cpp
+index 52733f49e9..768cf8730f 100644
+--- a/src/server/game/Server/Protocol/Opcodes.cpp
++++ b/src/server/game/Server/Protocol/Opcodes.cpp
+@@ -580,7 +580,7 @@ void OpcodeTable::InitializeServerTable()
+     DEFINE_OPCODE_HANDLER(SMSG_BATTLEFIELD_MGR_ENTRY_INVITE,                   0x1226, STATUS_UNHANDLED); // 5.4.8 18414
+     DEFINE_OPCODE_HANDLER(SMSG_BATTLEFIELD_MGR_QUEUE_INVITE,                   0x142E, STATUS_UNHANDLED); // 5.4.8 18414
+     DEFINE_OPCODE_HANDLER(SMSG_BATTLEFIELD_MGR_QUEUE_REQUEST_RESPONSE,         0x08BE, STATUS_UNHANDLED); // 5.4.8 18414
+-    DEFINE_OPCODE_HANDLER(SMSG_BATTLEFIELD_PLAYER_POSITIONS,                   0x0000, STATUS_UNHANDLED); // 5.4.8 18414
++    DEFINE_OPCODE_HANDLER(SMSG_BATTLEFIELD_PLAYER_POSITIONS,                   0x060A, STATUS_NEVER    ); // 5.4.8 18414
+     DEFINE_OPCODE_HANDLER(SMSG_BATTLEFIELD_RATED_INFO,                         0x0EBA, STATUS_NEVER    ); // 5.4.8 18414
+     DEFINE_OPCODE_HANDLER(SMSG_BATTLEFIELD_STATUS,                             0x0433, STATUS_NEVER    ); // 5.4.8 18414
+     DEFINE_OPCODE_HANDLER(SMSG_BATTLEFIELD_STATUS_ACTIVE,                      0x1AAF, STATUS_NEVER    ); // 5.4.8 18414

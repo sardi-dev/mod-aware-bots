@@ -1,0 +1,92 @@
+From 1bcb433c418ce8360915ec845f316917c02cc8df Mon Sep 17 00:00:00 2001
+From: sardi-dev <134648583+sardi-dev@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 13:02:47 +0000
+Subject: [PATCH 16/25] Let server scripts see the packets a session receives
+
+The existing receive hook passes only the socket, so a script cannot
+tell which session or player a packet came from. OnSessionPacketReceive
+is called with the session just before each packet's handler runs,
+with the original packet as a read-only reference.
+---
+ src/server/game/Scripting/ScriptMgr.cpp | 7 +++++++
+ src/server/game/Scripting/ScriptMgr.h   | 5 +++++
+ src/server/game/Server/WorldSession.cpp | 4 ++++
+ 3 files changed, 16 insertions(+)
+
+diff --git a/src/server/game/Scripting/ScriptMgr.cpp b/src/server/game/Scripting/ScriptMgr.cpp
+index 8d25675127..5adc0cf0f3 100644
+--- a/src/server/game/Scripting/ScriptMgr.cpp
++++ b/src/server/game/Scripting/ScriptMgr.cpp
+@@ -417,6 +417,13 @@ void ScriptMgr::OnSessionPacketSend(WorldSession* session, WorldPacket const& pa
+     FOREACH_SCRIPT(ServerScript)->OnSessionPacketSend(session, packet);
+ }
+ 
++void ScriptMgr::OnSessionPacketReceive(WorldSession* session, WorldPacket const& packet)
++{
++    ASSERT(session);
++
++    FOREACH_SCRIPT(ServerScript)->OnSessionPacketReceive(session, packet);
++}
++
+ void ScriptMgr::OnUnknownPacketReceive(WorldSocket* socket, WorldPacket packet)
+ {
+     ASSERT(socket);
+diff --git a/src/server/game/Scripting/ScriptMgr.h b/src/server/game/Scripting/ScriptMgr.h
+index dc33fd9e42..84a5fb2c88 100644
+--- a/src/server/game/Scripting/ScriptMgr.h
++++ b/src/server/game/Scripting/ScriptMgr.h
+@@ -225,6 +225,10 @@ public:
+     // Called for every packet a session sends, before it reaches the socket, also for sessions without one (bots
+     // run by a module). The packet is the original; do not keep a reference to it.
+     virtual void OnSessionPacketSend(WorldSession* /*session*/, WorldPacket const& /*packet*/) { }
++
++    // Called for every valid packet a session handles, just before its handler runs, with the session that
++    // received it. The packet is the original; do not keep a reference to it.
++    virtual void OnSessionPacketReceive(WorldSession* /*session*/, WorldPacket const& /*packet*/) { }
+ };
+ 
+ class WorldScript : public ScriptObject
+@@ -893,6 +897,7 @@ public: /* Initialization */
+     void OnPacketReceive(WorldSocket* socket, WorldPacket packet);
+     void OnPacketSend(WorldSocket* socket, WorldPacket packet);
+     void OnSessionPacketSend(WorldSession* session, WorldPacket const& packet);
++    void OnSessionPacketReceive(WorldSession* session, WorldPacket const& packet);
+     void OnUnknownPacketReceive(WorldSocket* socket, WorldPacket packet);
+ 
+     /* WorldScript */
+diff --git a/src/server/game/Server/WorldSession.cpp b/src/server/game/Server/WorldSession.cpp
+index f14c40615d..0d950c88b1 100644
+--- a/src/server/game/Server/WorldSession.cpp
++++ b/src/server/game/Server/WorldSession.cpp
+@@ -395,6 +395,7 @@ bool WorldSession::Update(uint32 diff, PacketFilter& updater)
+                     else if (_player->IsInWorld())
+                     {
+                         sScriptMgr->OnPacketReceive(m_Socket, WorldPacket(*packet));
++                        sScriptMgr->OnSessionPacketReceive(this, *packet);
+                         (this->*opHandle->Handler)(*packet);
+                         LogUnprocessedTail(packet);
+                     }
+@@ -408,6 +409,7 @@ bool WorldSession::Update(uint32 diff, PacketFilter& updater)
+                     {
+                         // not expected _player or must checked in packet hanlder
+                         sScriptMgr->OnPacketReceive(m_Socket, WorldPacket(*packet));
++                        sScriptMgr->OnSessionPacketReceive(this, *packet);
+                         (this->*opHandle->Handler)(*packet);
+                         LogUnprocessedTail(packet);
+                     }
+@@ -420,6 +422,7 @@ bool WorldSession::Update(uint32 diff, PacketFilter& updater)
+                     else
+                     {
+                         sScriptMgr->OnPacketReceive(m_Socket, WorldPacket(*packet));
++                        sScriptMgr->OnSessionPacketReceive(this, *packet);
+                         (this->*opHandle->Handler)(*packet);
+                         LogUnprocessedTail(packet);
+                     }
+@@ -438,6 +441,7 @@ bool WorldSession::Update(uint32 diff, PacketFilter& updater)
+                         m_playerRecentlyLogout = false;
+ 
+                     sScriptMgr->OnPacketReceive(m_Socket, WorldPacket(*packet));
++                    sScriptMgr->OnSessionPacketReceive(this, *packet);
+                     (this->*opHandle->Handler)(*packet);
+                     LogUnprocessedTail(packet);
+                     break;

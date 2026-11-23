@@ -1,0 +1,48 @@
+From e46cccc7b9acb32a69f4b11df72a477048eb6f45 Mon Sep 17 00:00:00 2001
+From: sardi-dev <134648583+sardi-dev@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 15:09:29 +0000
+Subject: [PATCH 03/25] Remember the result a spell sent when its cast failed
+
+Code that casts a spell through prepare() cannot tell whether the cast
+was refused: prepare() returns nothing and an instant spell finishes in
+the same call as a refused one. Spell::GetCastResult now returns the
+last result SendCastResult sent, SPELL_CAST_OK while nothing failed.
+---
+ src/server/game/Spells/Spell.cpp | 2 ++
+ src/server/game/Spells/Spell.h   | 3 +++
+ 2 files changed, 5 insertions(+)
+
+diff --git a/src/server/game/Spells/Spell.cpp b/src/server/game/Spells/Spell.cpp
+index 4284be9def..25df39721d 100644
+--- a/src/server/game/Spells/Spell.cpp
++++ b/src/server/game/Spells/Spell.cpp
+@@ -3993,6 +3993,8 @@ void Spell::finish(bool ok)
+ 
+ void Spell::SendCastResult(SpellCastResult result)
+ {
++    m_lastCastResult = result;
++
+     if (result == SpellCastResult::SPELL_CAST_OK)
+         return;
+ 
+diff --git a/src/server/game/Spells/Spell.h b/src/server/game/Spells/Spell.h
+index 274a765f40..81107034fd 100644
+--- a/src/server/game/Spells/Spell.h
++++ b/src/server/game/Spells/Spell.h
+@@ -508,6 +508,8 @@ public:
+ 
+     static void SendCastResult(Player* caster, SpellInfo const* spellInfo, uint8 cast_count, SpellCastResult result, SpellCustomErrors customError = SPELL_CUSTOM_ERROR_NONE, Opcodes opcode = SMSG_CAST_FAILED);
+     void SendCastResult(SpellCastResult result);
++    // The last result this spell sent (SPELL_CAST_OK until a check fails), for callers of prepare() such as bots.
++    SpellCastResult GetCastResult() const { return m_lastCastResult; }
+     void SendPetCastResult(SpellCastResult result);
+     void SendSpellStart();
+     void SendSpellGo();
+@@ -606,6 +608,7 @@ protected:
+     int32 m_casttime;                                   // Calculated spell cast time initialized only in Spell::prepare
+     uint32 m_spellGoTime = 0;
+     bool m_canReflect;                                  // can reflect this spell?
++    SpellCastResult m_lastCastResult = SpellCastResult::SPELL_CAST_OK;  // see GetCastResult()
+     bool m_autoRepeat;
+     bool m_darkSimulacrum = false;
+     uint8 m_runesState;

@@ -1,0 +1,81 @@
+From 609af6d00229f1e8b654b82e61e835fc9f75c9d5 Mon Sep 17 00:00:00 2001
+From: sardi-dev <134648583+sardi-dev@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 15:47:19 +0000
+Subject: [PATCH 06/25] Let modules read capture point, battlefield and
+ encounter state
+
+Outdoor PvP capture points, a battlefield's grouping timer, Alterac
+Valley reinforcements and an instance's encounter count were private,
+so modules such as player bots could not read them. Each gets a small
+read-only getter.
+
+Based on Legends of Azeroth 5.4.8.
+---
+ src/server/game/Battlefield/Battlefield.h            | 2 ++
+ src/server/game/Battlegrounds/Zones/BattlegroundAV.h | 1 +
+ src/server/game/Instances/InstanceScript.h           | 1 +
+ src/server/game/OutdoorPvP/OutdoorPvP.h              | 7 +++++++
+ 4 files changed, 11 insertions(+)
+
+diff --git a/src/server/game/Battlefield/Battlefield.h b/src/server/game/Battlefield/Battlefield.h
+index 03edbc5517..ba110754ba 100644
+--- a/src/server/game/Battlefield/Battlefield.h
++++ b/src/server/game/Battlefield/Battlefield.h
+@@ -343,6 +343,8 @@ public:
+     GraveyardVect GetGraveyardVector() { return m_GraveyardList; }
+ 
+     uint32 GetTimer() const { return m_Timer; }
++    // How long before the battle players are invited to queue (read-only, for modules such as player bots).
++    uint32 GetStartGroupingTimer() const { return m_StartGroupingTimer; }
+     void SetTimer(uint32 timer) { m_Timer = timer; }
+ 
+     void DoPlaySoundToAll(uint32 SoundID);
+diff --git a/src/server/game/Battlegrounds/Zones/BattlegroundAV.h b/src/server/game/Battlegrounds/Zones/BattlegroundAV.h
+index d18eb82db2..2a008644b5 100644
+--- a/src/server/game/Battlegrounds/Zones/BattlegroundAV.h
++++ b/src/server/game/Battlegrounds/Zones/BattlegroundAV.h
+@@ -1565,6 +1565,7 @@ public:
+     BG_AV_NodeInfo const& GetAVNodeInfo(uint32 node) const { return m_Nodes[node]; }
+     bool IsCaptainAlive(uint8 index) const { return m_CaptainAlive[index]; }
+     uint32 GetMineOwner(uint8 index) const { return m_Mine_Owner[index]; }
++    int32 GetTeamReinforcements(uint8 index) const { return m_Team_Scores[index]; }
+ private:
+     void PostUpdateImpl(uint32 diff) OVERRIDE;
+ 
+diff --git a/src/server/game/Instances/InstanceScript.h b/src/server/game/Instances/InstanceScript.h
+index a707c46cc0..ae889b9a16 100644
+--- a/src/server/game/Instances/InstanceScript.h
++++ b/src/server/game/Instances/InstanceScript.h
+@@ -193,6 +193,7 @@ public:
+ 
+     virtual bool SetBossState(uint32 id, EncounterState state);
+     EncounterState GetBossState(uint32 id) const { return id < bosses.size() ? bosses[id].state : TO_BE_DECIDED; }
++    uint32 GetEncounterCount() const { return uint32(bosses.size()); }
+     BossBoundaryMap const* GetBossBoundary(uint32 id) const { return id < bosses.size() ? &bosses[id].boundary : NULL; }
+ 
+     // Achievement criteria additional requirements check
+diff --git a/src/server/game/OutdoorPvP/OutdoorPvP.h b/src/server/game/OutdoorPvP/OutdoorPvP.h
+index 9bce1cba88..b5de093a21 100644
+--- a/src/server/game/OutdoorPvP/OutdoorPvP.h
++++ b/src/server/game/OutdoorPvP/OutdoorPvP.h
+@@ -104,6 +104,10 @@ public:
+     // returns true if the state of the objective has changed, in this case, the OutdoorPvP must send a world state ui update.
+     virtual bool Update(uint32 diff);
+ 
++    // Read-only slider state, for modules such as player bots.
++    float GetSlider() const { return m_value; }
++    float GetMinValue() const { return m_minValue; }
++
+     virtual void ChangeState() = 0;
+ 
+     virtual void ChangeTeam(TeamId /*oldTeam*/) { }
+@@ -213,6 +217,9 @@ public:
+     // called by OutdoorPvPMgr, updates the objectives and if needed, sends new worldstateui information
+     virtual bool Update(uint32 diff);
+ 
++    // Read-only, for modules such as player bots.
++    OPvPCapturePointMap const& GetCapturePoints() const { return m_capturePoints; }
++
+     // handle npc/player kill
+     virtual void HandleKill(Player* killer, Unit* killed);
+     virtual void HandleKillImpl(Player* /*killer*/, Unit* /*killed*/) { }

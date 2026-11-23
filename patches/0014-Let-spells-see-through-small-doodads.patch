@@ -1,0 +1,435 @@
+From 2b8bb90d45c36b0156e8049852fa0c5a58fea67a Mon Sep 17 00:00:00 2001
+From: sardi-dev <134648583+sardi-dev@users.noreply.github.com>
+Date: Sun, 1 Nov 2026 14:39:51 +0000
+Subject: [PATCH 14/25] Let spells see through small doodads
+
+Spell line of sight checks stopped at every M2 model in the map files,
+such as barrels, kegs, lamps and other decorations, so spells failed
+with "out of line of sight" where the target was in plain view. Spell
+casts, target checks and chain targets now ignore M2 models, which
+the extracted vmaps already mark; buildings and game objects still
+block. Other line of sight checks keep their behaviour.
+
+Ported from TrinityCore 3.3.5.
+---
+ .../collision/Management/IVMapManager.h       |  3 +-
+ .../collision/Management/VMapManager2.cpp     |  4 +--
+ .../collision/Management/VMapManager2.h       |  2 +-
+ src/server/collision/Maps/MapTree.cpp         | 18 +++++-----
+ src/server/collision/Maps/MapTree.h           |  5 +--
+ .../collision/Models/ModelIgnoreFlags.h       | 34 +++++++++++++++++++
+ src/server/collision/Models/ModelInstance.cpp |  6 +++-
+ src/server/collision/Models/ModelInstance.h   |  3 +-
+ src/server/game/Entities/Object/Object.cpp    |  8 ++---
+ src/server/game/Entities/Object/Object.h      |  5 +--
+ src/server/game/Maps/Map.cpp                  |  4 +--
+ src/server/game/Maps/Map.h                    |  3 +-
+ src/server/game/Spells/Spell.cpp              | 12 +++----
+ 13 files changed, 76 insertions(+), 31 deletions(-)
+ create mode 100644 src/server/collision/Models/ModelIgnoreFlags.h
+
+diff --git a/src/server/collision/Management/IVMapManager.h b/src/server/collision/Management/IVMapManager.h
+index a7b8f7dedc..c0da3d62e5 100644
+--- a/src/server/collision/Management/IVMapManager.h
++++ b/src/server/collision/Management/IVMapManager.h
+@@ -8,6 +8,7 @@
+ 
+ #include <string>
+ #include "Define.h"
++#include "ModelIgnoreFlags.h"
+ 
+ //===========================================================
+ 
+@@ -47,7 +48,7 @@ namespace VMAP
+             virtual void unloadMap(unsigned int pMapId, int x, int y) = 0;
+             virtual void unloadMap(unsigned int pMapId) = 0;
+ 
+-            virtual bool isInLineOfSight(unsigned int pMapId, float x1, float y1, float z1, float x2, float y2, float z2) = 0;
++            virtual bool isInLineOfSight(unsigned int pMapId, float x1, float y1, float z1, float x2, float y2, float z2, ModelIgnoreFlags ignoreFlags) = 0;
+             virtual float getHeight(unsigned int pMapId, float x, float y, float z, float maxSearchDist) = 0;
+             /**
+             test if we hit an object. return true if we hit one. rx, ry, rz will hold the hit position or the dest position, if no intersection was found
+diff --git a/src/server/collision/Management/VMapManager2.cpp b/src/server/collision/Management/VMapManager2.cpp
+index 2f632da98c..df180f6989 100644
+--- a/src/server/collision/Management/VMapManager2.cpp
++++ b/src/server/collision/Management/VMapManager2.cpp
+@@ -120,7 +120,7 @@ namespace VMAP
+         }
+     }
+ 
+-    bool VMapManager2::isInLineOfSight(unsigned int mapId, float x1, float y1, float z1, float x2, float y2, float z2)
++    bool VMapManager2::isInLineOfSight(unsigned int mapId, float x1, float y1, float z1, float x2, float y2, float z2, ModelIgnoreFlags ignoreFlags)
+     {
+         if (!isLineOfSightCalcEnabled() || DisableMgr::IsDisabledFor(DISABLE_TYPE_VMAP, mapId, NULL, VMAP_DISABLE_LOS))
+             return true;
+@@ -132,7 +132,7 @@ namespace VMAP
+             Vector3 pos2 = convertPositionToInternalRep(x2, y2, z2);
+             if (pos1 != pos2)
+             {
+-                return instanceTree->second->isInLineOfSight(pos1, pos2);
++                return instanceTree->second->isInLineOfSight(pos1, pos2, ignoreFlags);
+             }
+         }
+ 
+diff --git a/src/server/collision/Management/VMapManager2.h b/src/server/collision/Management/VMapManager2.h
+index 0fca4b1f27..6e7a0e79ee 100644
+--- a/src/server/collision/Management/VMapManager2.h
++++ b/src/server/collision/Management/VMapManager2.h
+@@ -78,7 +78,7 @@ namespace VMAP
+             void unloadMap(unsigned int mapId, int x, int y);
+             void unloadMap(unsigned int mapId);
+ 
+-            bool isInLineOfSight(unsigned int mapId, float x1, float y1, float z1, float x2, float y2, float z2) ;
++            bool isInLineOfSight(unsigned int mapId, float x1, float y1, float z1, float x2, float y2, float z2, ModelIgnoreFlags ignoreFlags) OVERRIDE;
+             /**
+             fill the hit pos and return true, if an object was hit
+             */
+diff --git a/src/server/collision/Maps/MapTree.cpp b/src/server/collision/Maps/MapTree.cpp
+index d933c76057..71a942167b 100644
+--- a/src/server/collision/Maps/MapTree.cpp
++++ b/src/server/collision/Maps/MapTree.cpp
+@@ -5,6 +5,7 @@
+ 
+ #include "MapTree.h"
+ #include "ModelInstance.h"
++#include "ModelIgnoreFlags.h"
+ #include "VMapManager2.h"
+ #include "VMapDefinitions.h"
+ #include "Log.h"
+@@ -23,10 +24,10 @@ namespace VMAP
+     class MapRayCallback
+     {
+         public:
+-            explicit MapRayCallback(ModelInstance* val): prims(val), hit(false) { }
++            MapRayCallback(ModelInstance* val, ModelIgnoreFlags ignoreFlags): prims(val), hit(false), flags(ignoreFlags) { }
+             bool operator()(const G3D::Ray& ray, uint32 entry, float& distance, bool pStopAtFirstHit=true)
+             {
+-                bool result = prims[entry].intersectRay(ray, distance, pStopAtFirstHit);
++                bool result = prims[entry].intersectRay(ray, distance, pStopAtFirstHit, flags);
+                 if (result)
+                     hit = true;
+                 return result;
+@@ -35,6 +36,7 @@ namespace VMAP
+     protected:
+         ModelInstance* prims;
+         bool hit;
++        ModelIgnoreFlags flags;
+     };
+ 
+     class AreaInfoCallback
+@@ -129,10 +131,10 @@ namespace VMAP
+     Else, pMaxDist is not modified and returns false;
+     */
+ 
+-    bool StaticMapTree::getIntersectionTime(const G3D::Ray& pRay, float &pMaxDist, bool pStopAtFirstHit) const
++    bool StaticMapTree::getIntersectionTime(const G3D::Ray& pRay, float &pMaxDist, bool pStopAtFirstHit, ModelIgnoreFlags ignoreFlags) const
+     {
+         float distance = pMaxDist;
+-        MapRayCallback intersectionCallBack(iTreeValues);
++        MapRayCallback intersectionCallBack(iTreeValues, ignoreFlags);
+         iTree.intersectRay(pRay, intersectionCallBack, distance, pStopAtFirstHit);
+         if (intersectionCallBack.didHit())
+             pMaxDist = distance;
+@@ -140,7 +142,7 @@ namespace VMAP
+     }
+     //=========================================================
+ 
+-    bool StaticMapTree::isInLineOfSight(const Vector3& pos1, const Vector3& pos2) const
++    bool StaticMapTree::isInLineOfSight(const Vector3& pos1, const Vector3& pos2, ModelIgnoreFlags ignoreFlags) const
+     {
+         float maxDist = (pos2 - pos1).magnitude();
+         // return false if distance is over max float, in case of cheater teleporting to the end of the universe
+@@ -155,7 +157,7 @@ namespace VMAP
+             return true;
+         // direction with length of 1
+         G3D::Ray ray = G3D::Ray::fromOriginAndDirection(pos1, (pos2 - pos1)/maxDist);
+-        if (getIntersectionTime(ray, maxDist, true))
++        if (getIntersectionTime(ray, maxDist, true, ignoreFlags))
+             return false;
+ 
+         return true;
+@@ -181,7 +183,7 @@ namespace VMAP
+         Vector3 dir = (pPos2 - pPos1)/maxDist;              // direction with length of 1
+         G3D::Ray ray(pPos1, dir);
+         float dist = maxDist;
+-        if (getIntersectionTime(ray, dist, false))
++        if (getIntersectionTime(ray, dist, false, ModelIgnoreFlags::Nothing))
+         {
+             pResultHitPos = pPos1 + dir * dist;
+             if (pModifyDist < 0)
+@@ -217,7 +219,7 @@ namespace VMAP
+         Vector3 dir = Vector3(0, 0, -1);
+         G3D::Ray ray(pPos, dir);   // direction with length of 1
+         float maxDist = maxSearchDist;
+-        if (getIntersectionTime(ray, maxDist, false))
++        if (getIntersectionTime(ray, maxDist, false, ModelIgnoreFlags::Nothing))
+         {
+             height = pPos.z - maxDist;
+         }
+diff --git a/src/server/collision/Maps/MapTree.h b/src/server/collision/Maps/MapTree.h
+index 66e7796901..c1e19d0135 100644
+--- a/src/server/collision/Maps/MapTree.h
++++ b/src/server/collision/Maps/MapTree.h
+@@ -12,6 +12,7 @@
+ 
+ namespace VMAP
+ {
++    enum class ModelIgnoreFlags : uint32;
+     class ModelInstance;
+     class GroupModel;
+     class VMapManager2;
+@@ -44,7 +45,7 @@ namespace VMAP
+             std::string iBasePath;
+ 
+         private:
+-            bool getIntersectionTime(const G3D::Ray& pRay, float &pMaxDist, bool pStopAtFirstHit) const;
++            bool getIntersectionTime(const G3D::Ray& pRay, float &pMaxDist, bool pStopAtFirstHit, ModelIgnoreFlags ignoreFlags) const;
+             //bool containsLoadedMapTile(unsigned int pTileIdent) const { return(iLoadedMapTiles.containsKey(pTileIdent)); }
+         public:
+             static std::string getTileFileName(uint32 mapID, uint32 tileX, uint32 tileY);
+@@ -55,7 +56,7 @@ namespace VMAP
+             StaticMapTree(uint32 mapID, const std::string &basePath);
+             ~StaticMapTree();
+ 
+-            bool isInLineOfSight(const G3D::Vector3& pos1, const G3D::Vector3& pos2) const;
++            bool isInLineOfSight(const G3D::Vector3& pos1, const G3D::Vector3& pos2, ModelIgnoreFlags ignoreFlags) const;
+             bool getObjectHitPos(const G3D::Vector3& pos1, const G3D::Vector3& pos2, G3D::Vector3& pResultHitPos, float pModifyDist) const;
+             float getHeight(const G3D::Vector3& pPos, float maxSearchDist) const;
+             bool getAreaInfo(G3D::Vector3 &pos, uint32 &flags, int32 &adtId, int32 &rootId, int32 &groupId) const;
+diff --git a/src/server/collision/Models/ModelIgnoreFlags.h b/src/server/collision/Models/ModelIgnoreFlags.h
+new file mode 100644
+index 0000000000..4cafa37705
+--- /dev/null
++++ b/src/server/collision/Models/ModelIgnoreFlags.h
+@@ -0,0 +1,34 @@
++/*
++ * This file is part of the TrinityCore Project. See AUTHORS file for Copyright information
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License as published by the
++ * Free Software Foundation; either version 2 of the License, or (at your
++ * option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
++ * more details.
++ *
++ * You should have received a copy of the GNU General Public License along
++ * with this program. If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef ModelIgnoreFlags_h__
++#define ModelIgnoreFlags_h__
++
++#include "Define.h"
++
++namespace VMAP
++{
++enum class ModelIgnoreFlags : uint32
++{
++    Nothing = 0x00,
++    M2      = 0x01
++};
++
++inline ModelIgnoreFlags operator&(ModelIgnoreFlags left, ModelIgnoreFlags right) { return ModelIgnoreFlags(uint32(left) & uint32(right)); }
++}
++
++#endif // ModelIgnoreFlags_h__
+diff --git a/src/server/collision/Models/ModelInstance.cpp b/src/server/collision/Models/ModelInstance.cpp
+index 2460a90603..8b36b79840 100644
+--- a/src/server/collision/Models/ModelInstance.cpp
++++ b/src/server/collision/Models/ModelInstance.cpp
+@@ -4,6 +4,7 @@
+ */
+ 
+ #include "ModelInstance.h"
++#include "ModelIgnoreFlags.h"
+ #include "WorldModel.h"
+ #include "MapTree.h"
+ #include "VMapDefinitions.h"
+@@ -19,8 +20,11 @@ namespace VMAP
+         iInvScale = 1.f/iScale;
+     }
+ 
+-    bool ModelInstance::intersectRay(const G3D::Ray& pRay, float& pMaxDist, bool pStopAtFirstHit) const
++    bool ModelInstance::intersectRay(const G3D::Ray& pRay, float& pMaxDist, bool pStopAtFirstHit, ModelIgnoreFlags ignoreFlags) const
+     {
++        if ((ignoreFlags & ModelIgnoreFlags::M2) != ModelIgnoreFlags::Nothing && (flags & MOD_M2))
++            return false;
++
+         if (!iModel)
+         {
+             //std::cout << "<object not loaded>\n";
+diff --git a/src/server/collision/Models/ModelInstance.h b/src/server/collision/Models/ModelInstance.h
+index 6dd26f88a6..785c6b8a78 100644
+--- a/src/server/collision/Models/ModelInstance.h
++++ b/src/server/collision/Models/ModelInstance.h
+@@ -15,6 +15,7 @@
+ 
+ namespace VMAP
+ {
++    enum class ModelIgnoreFlags : uint32;
+     class WorldModel;
+     struct AreaInfo;
+     struct LocationInfo;
+@@ -53,7 +54,7 @@ namespace VMAP
+             ModelInstance() : iInvScale(0.0f), iModel(0) { }
+             ModelInstance(const ModelSpawn &spawn, WorldModel* model);
+             void setUnloaded() { iModel = 0; }
+-            bool intersectRay(const G3D::Ray& pRay, float& pMaxDist, bool pStopAtFirstHit) const;
++            bool intersectRay(const G3D::Ray& pRay, float& pMaxDist, bool pStopAtFirstHit, ModelIgnoreFlags ignoreFlags) const;
+             void intersectPoint(const G3D::Vector3& p, AreaInfo &info) const;
+             bool GetLocationInfo(const G3D::Vector3& p, LocationInfo &info) const;
+             bool GetLiquidLevel(const G3D::Vector3& p, LocationInfo &info, float &liqHeight) const;
+diff --git a/src/server/game/Entities/Object/Object.cpp b/src/server/game/Entities/Object/Object.cpp
+index 483d8ce285..ff8153e082 100644
+--- a/src/server/game/Entities/Object/Object.cpp
++++ b/src/server/game/Entities/Object/Object.cpp
+@@ -1700,14 +1700,14 @@ bool WorldObject::_IsWithinDist(WorldObject const* obj, float dist2compare, bool
+     return distsq < maxdist * maxdist;
+ }
+ 
+-bool WorldObject::IsWithinLOSInMap(const WorldObject* obj) const
++bool WorldObject::IsWithinLOSInMap(const WorldObject* obj, VMAP::ModelIgnoreFlags ignoreFlags) const
+ {
+     if (!IsInMap(obj))
+         return false;
+ 
+     float ox, oy, oz;
+     obj->GetPosition(ox, oy, oz);
+-    return IsWithinLOS(ox, oy, oz);
++    return IsWithinLOS(ox, oy, oz, ignoreFlags);
+ }
+ 
+ float WorldObject::GetDistance(const WorldObject* obj) const
+@@ -1784,14 +1784,14 @@ bool WorldObject::IsWithinDistInMap(WorldObject const* obj, float dist2compare,
+     return obj && IsInMap(obj) && InSamePhase(obj) && _IsWithinDist(obj, dist2compare, is3D);
+ }
+ 
+-bool WorldObject::IsWithinLOS(float ox, float oy, float oz) const
++bool WorldObject::IsWithinLOS(float ox, float oy, float oz, VMAP::ModelIgnoreFlags ignoreFlags) const
+ {
+     /*float x, y, z;
+     GetPosition(x, y, z);
+     VMAP::IVMapManager* vMapManager = VMAP::VMapFactory::createOrGetVMapManager();
+     return vMapManager->isInLineOfSight(GetMapId(), x, y, z+2.0f, ox, oy, oz+2.0f);*/
+     if (IsInWorld())
+-        return GetMap()->isInLineOfSight(GetPositionX(), GetPositionY(), GetPositionZ() + 2.f, ox, oy, oz + 2.f, GetPhaseMask());
++        return GetMap()->isInLineOfSight(GetPositionX(), GetPositionY(), GetPositionZ() + 2.f, ox, oy, oz + 2.f, GetPhaseMask(), ignoreFlags);
+ 
+     return true;
+ }
+diff --git a/src/server/game/Entities/Object/Object.h b/src/server/game/Entities/Object/Object.h
+index 72928a44af..e8ebf63e99 100644
+--- a/src/server/game/Entities/Object/Object.h
++++ b/src/server/game/Entities/Object/Object.h
+@@ -9,6 +9,7 @@
+ #include "Common.h"
+ #include "GridReference.h"
+ #include "Map.h"
++#include "ModelIgnoreFlags.h"
+ #include "MapObjectCellMoveState.h"
+ #include "ObjectDefines.h"
+ #include "UpdateMask.h"
+@@ -684,8 +685,8 @@ public:
+     // use only if you will sure about placing both object at same map
+     bool IsWithinDist(WorldObject const* obj, float dist2compare, bool is3D = true) const;
+     bool IsWithinDistInMap(WorldObject const* obj, float dist2compare, bool is3D = true) const;
+-    bool IsWithinLOS(float x, float y, float z) const;
+-    bool IsWithinLOSInMap(WorldObject const* obj) const;
++    bool IsWithinLOS(float x, float y, float z, VMAP::ModelIgnoreFlags ignoreFlags = VMAP::ModelIgnoreFlags::Nothing) const;
++    bool IsWithinLOSInMap(WorldObject const* obj, VMAP::ModelIgnoreFlags ignoreFlags = VMAP::ModelIgnoreFlags::Nothing) const;
+     bool GetDistanceOrder(WorldObject const* obj1, WorldObject const* obj2, bool is3D = true) const;
+     bool IsInRange(WorldObject const* obj, float minRange, float maxRange, bool is3D = true) const;
+     bool IsInRange2d(float x, float y, float minRange, float maxRange) const;
+diff --git a/src/server/game/Maps/Map.cpp b/src/server/game/Maps/Map.cpp
+index f106e8ab40..bf46e198d9 100644
+--- a/src/server/game/Maps/Map.cpp
++++ b/src/server/game/Maps/Map.cpp
+@@ -2427,9 +2427,9 @@ void Map::GetZoneAndAreaIdByAreaFlag(uint32& zoneid, uint32& areaid, uint16 area
+     zoneid = entry ? ((entry->m_ParentAreaID != 0) ? entry->m_ParentAreaID : entry->m_ID) : 0;
+ }
+ 
+-bool Map::isInLineOfSight(float x1, float y1, float z1, float x2, float y2, float z2, uint32 phasemask) const
++bool Map::isInLineOfSight(float x1, float y1, float z1, float x2, float y2, float z2, uint32 phasemask, VMAP::ModelIgnoreFlags ignoreFlags) const
+ {
+-    return VMAP::VMapFactory::createOrGetVMapManager()->isInLineOfSight(GetId(), x1, y1, z1, x2, y2, z2)
++    return VMAP::VMapFactory::createOrGetVMapManager()->isInLineOfSight(GetId(), x1, y1, z1, x2, y2, z2, ignoreFlags)
+         && _dynamicTree.isInLineOfSight(x1, y1, z1, x2, y2, z2, phasemask);
+ }
+ 
+diff --git a/src/server/game/Maps/Map.h b/src/server/game/Maps/Map.h
+index 21f952561b..ac5e7bd088 100644
+--- a/src/server/game/Maps/Map.h
++++ b/src/server/game/Maps/Map.h
+@@ -40,6 +40,7 @@ class MapInstanced;
+ class InstanceMap;
+ class Transport;
+ namespace Skyfire { struct ObjectUpdater; }
++namespace VMAP { enum class ModelIgnoreFlags : uint32; }
+ 
+ struct ScriptAction
+ {
+@@ -449,7 +450,7 @@ public:
+     const InstanceMap* ToInstanceMap() const { if (IsInstance())  return (const InstanceMap*)((InstanceMap*)this); else return NULL; }
+     float GetWaterOrGroundLevel(float x, float y, float z, float* ground = NULL, bool swim = false) const;
+     float GetHeight(uint32 phasemask, float x, float y, float z, bool vmap = true, float maxSearchDist = DEFAULT_HEIGHT_SEARCH) const;
+-    bool isInLineOfSight(float x1, float y1, float z1, float x2, float y2, float z2, uint32 phasemask) const;
++    bool isInLineOfSight(float x1, float y1, float z1, float x2, float y2, float z2, uint32 phasemask, VMAP::ModelIgnoreFlags ignoreFlags) const;
+     void Balance() { _dynamicTree.balance(); }
+     void RemoveGameObjectModel(const GameObjectModel& model) { _dynamicTree.remove(model); }
+     void InsertGameObjectModel(const GameObjectModel& model) { _dynamicTree.insert(model); }
+diff --git a/src/server/game/Spells/Spell.cpp b/src/server/game/Spells/Spell.cpp
+index 25df39721d..3fc531bc69 100644
+--- a/src/server/game/Spells/Spell.cpp
++++ b/src/server/game/Spells/Spell.cpp
+@@ -2082,7 +2082,7 @@ void Spell::SearchChainTargets(std::list<WorldObject*>& targets, uint32 chainTar
+                 if (Unit* unitTarget = (*itr)->ToUnit())
+                 {
+                     uint32 deficit = unitTarget->GetMaxHealth() - unitTarget->GetHealth();
+-                    if ((deficit > maxHPDeficit || foundItr == tempTargets.end()) && target->IsWithinDist(unitTarget, jumpRadius) && target->IsWithinLOSInMap(unitTarget))
++                    if ((deficit > maxHPDeficit || foundItr == tempTargets.end()) && target->IsWithinDist(unitTarget, jumpRadius) && target->IsWithinLOSInMap(unitTarget, VMAP::ModelIgnoreFlags::M2))
+                     {
+                         foundItr = itr;
+                         maxHPDeficit = deficit;
+@@ -2097,10 +2097,10 @@ void Spell::SearchChainTargets(std::list<WorldObject*>& targets, uint32 chainTar
+             {
+                 if (foundItr == tempTargets.end())
+                 {
+-                    if ((!isBouncingFar || target->IsWithinDist(*itr, jumpRadius)) && target->IsWithinLOSInMap(*itr))
++                    if ((!isBouncingFar || target->IsWithinDist(*itr, jumpRadius)) && target->IsWithinLOSInMap(*itr, VMAP::ModelIgnoreFlags::M2))
+                         foundItr = itr;
+                 }
+-                else if (target->GetDistanceOrder(*itr, *foundItr) && target->IsWithinLOSInMap(*itr))
++                else if (target->GetDistanceOrder(*itr, *foundItr) && target->IsWithinLOSInMap(*itr, VMAP::ModelIgnoreFlags::M2))
+                     foundItr = itr;
+             }
+         }
+@@ -5880,7 +5880,7 @@ SpellCastResult Spell::CheckCast(bool strict)
+             }
+ 
+             if (m_caster->GetEntry() != WORLD_TRIGGER) // Ignore LOS for gameobjects casts (wrongly casted by a trigger)
+-                if (!(m_spellInfo->AttributesEx2 & SPELL_ATTR2_CAN_TARGET_NOT_IN_LOS) && !DisableMgr::IsDisabledFor(DISABLE_TYPE_SPELL, m_spellInfo->Id, NULL, SPELL_DISABLE_LOS) && !m_caster->IsWithinLOSInMap(target))
++                if (!(m_spellInfo->AttributesEx2 & SPELL_ATTR2_CAN_TARGET_NOT_IN_LOS) && !DisableMgr::IsDisabledFor(DISABLE_TYPE_SPELL, m_spellInfo->Id, NULL, SPELL_DISABLE_LOS) && !m_caster->IsWithinLOSInMap(target, VMAP::ModelIgnoreFlags::M2))
+                     return SpellCastResult::SPELL_FAILED_LINE_OF_SIGHT;
+ 
+             // Smoke Bomb / similar: interfere targeting between inside and outside cloud
+@@ -5896,7 +5896,7 @@ SpellCastResult Spell::CheckCast(bool strict)
+         float x, y, z;
+         m_targets.GetDstPos()->GetPosition(x, y, z);
+ 
+-        if (!(m_spellInfo->AttributesEx2 & SPELL_ATTR2_CAN_TARGET_NOT_IN_LOS) && !DisableMgr::IsDisabledFor(DISABLE_TYPE_SPELL, m_spellInfo->Id, NULL, SPELL_DISABLE_LOS) && !m_caster->IsWithinLOS(x, y, z))
++        if (!(m_spellInfo->AttributesEx2 & SPELL_ATTR2_CAN_TARGET_NOT_IN_LOS) && !DisableMgr::IsDisabledFor(DISABLE_TYPE_SPELL, m_spellInfo->Id, NULL, SPELL_DISABLE_LOS) && !m_caster->IsWithinLOS(x, y, z, VMAP::ModelIgnoreFlags::M2))
+             return SpellCastResult::SPELL_FAILED_LINE_OF_SIGHT;
+     }
+ 
+@@ -7531,7 +7531,7 @@ bool Spell::CheckEffectTarget(Unit const* target, uint32 eff) const
+                 caster = m_caster->GetMap()->GetGameObject(m_originalCasterGUID);
+             if (!caster)
+                 caster = m_caster;
+-            if (target != m_caster && !target->IsWithinLOSInMap(caster))
++            if (target != m_caster && !target->IsWithinLOSInMap(caster, VMAP::ModelIgnoreFlags::M2))
+                 return false;
+             break;
+     }

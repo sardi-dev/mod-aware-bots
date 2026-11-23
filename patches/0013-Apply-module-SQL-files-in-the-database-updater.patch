@@ -1,0 +1,513 @@
+From 7797aeaaccb58759b67324d802f44059085d3f5f Mon Sep 17 00:00:00 2001
+From: sardi-dev <134648583+sardi-dev@users.noreply.github.com>
+Date: Thu, 12 Nov 2026 18:33:16 +0000
+Subject: [PATCH 13/25] Apply module SQL files in the database updater
+
+Modules had no way to ship database content: their scripts are registered
+after the world data is loaded, so a module could not add its own tables or
+rows in time.
+
+The updater now also reads modules/<module>/data/sql/db-auth, db-characters
+and db-world after the core updates of the same database. Files run once, in
+module name order and then file name order, and are recorded in
+skyfire_db_updates as <module>/<file>, so an edited file is handled like an
+edited core update. A failing file stops startup like a failing core update.
+The baseline mode does not record module files as applied.
+
+Updates.Modules turns it off, Updates.ModulesSqlPath overrides the folder
+(default: the modules folder next to SqlPath). The module SQL is installed to
+<prefix>/modules/<module>/data/sql. The folder layout is the one AzerothCore
+uses for module SQL.
+---
+ modules/CMakeLists.txt                        |   5 +
+ modules/README.md                             |  14 +-
+ src/server/authserver/Main.cpp                |   2 +
+ src/server/authserver/authserver.conf.dist    |  23 ++++
+ .../Database/DatabaseSetup/DatabaseSetup.cpp  | 106 ++++++++++-----
+ .../Database/DatabaseSetup/DatabaseSetup.h    |   4 +
+ src/server/worldserver/Master.cpp             |   4 +
+ src/server/worldserver/worldserver.conf.dist  |  23 ++++
+ src/tests/DatabaseSetupTests.cpp              | 122 ++++++++++++++++++
+ 9 files changed, 272 insertions(+), 31 deletions(-)
+
+diff --git a/modules/CMakeLists.txt b/modules/CMakeLists.txt
+index a4e5a2197d..14ebb1bd3b 100644
+--- a/modules/CMakeLists.txt
++++ b/modules/CMakeLists.txt
+@@ -85,6 +85,11 @@ foreach(MODULE_DIR_NAME ${MODULE_CANDIDATES})
+       else()
+         install(FILES ${MODULE_CONF_FILES} DESTINATION ${CONF_DIR})
+       endif()
++
++      # Module SQL is applied by the database updater at startup, so it must be next to the install.
++      if(IS_DIRECTORY ${MODULE_PATH}/data/sql)
++        install(DIRECTORY ${MODULE_PATH}/data/sql DESTINATION modules/${MODULE_DIR_NAME}/data)
++      endif()
+     endif()
+   endif()
+ endforeach()
+diff --git a/modules/README.md b/modules/README.md
+index 853e865934..146001eb8c 100644
+--- a/modules/README.md
++++ b/modules/README.md
+@@ -22,10 +22,22 @@ modules/
+       mod_yourmodule.cpp
+     conf/                    # optional; *.conf.dist staged next to worldserver
+       yourmodule.conf.dist
+-    sql/                     # optional; applied manually / by your own tooling
++    data/sql/                # optional; applied by the database updater, see "Module SQL"
++      db-auth/
++      db-characters/
++      db-world/
+     README.md
+ ```
+ 
++## Module SQL
++
++SQL files in `data/sql/db-auth`, `data/sql/db-characters` and `data/sql/db-world` are applied by the
++core's database updater when `authserver` or `worldserver` starts, after the core's own updates and
++before data loads. Each file runs once, in file name order, and modules run in name order. Applied files
++are recorded in `skyfire_db_updates` as `<module>/<file>`. The installed copy goes to
++`<prefix>/modules/<module>/data/sql`; set `Updates.ModulesSqlPath` to read another folder, for example the
++source `modules` folder. See `Updates.Modules` in `worldserver.conf.dist`.
++
+ ## Required loader function
+ 
+ Each module must implement exactly one loader function named:
+diff --git a/src/server/authserver/Main.cpp b/src/server/authserver/Main.cpp
+index 8480e765e7..c69cb10983 100644
+--- a/src/server/authserver/Main.cpp
++++ b/src/server/authserver/Main.cpp
+@@ -88,6 +88,8 @@ namespace
+             sConfigMgr->GetBoolDefault("LoginDatabase.AllowUpdateHashMismatch", true);
+         options.ImportPendingUpdates =
+             sConfigMgr->GetBoolDefault("LoginDatabase.ImportPendingUpdates", false);
++        options.ImportModuleUpdates = sConfigMgr->GetBoolDefault("Updates.Modules", true);
++        options.ModulesSqlPath = sConfigMgr->GetStringDefault("Updates.ModulesSqlPath", "");
+ 
+         return options;
+     }
+diff --git a/src/server/authserver/authserver.conf.dist b/src/server/authserver/authserver.conf.dist
+index f1643cedb1..1b225a9c78 100644
+--- a/src/server/authserver/authserver.conf.dist
++++ b/src/server/authserver/authserver.conf.dist
+@@ -345,6 +345,29 @@ LoginDatabase.ImportPendingUpdates = 0
+ 
+ LoginDatabase.SqlPath = ""
+ 
++#
++#    Updates.Modules
++#        Description: Also applies SQL files that modules ship in
++#                     modules/<module>/data/sql/db-auth
++#                     during startup update checks, after the core updates and before data loads.
++#        Important:   Files run once, in module name order and then file name order, and are
++#                     recorded in skyfire_db_updates as <module>/<file>. A module file edited
++#                     after it was applied is handled like an edited core update, see
++#                     LoginDatabase.AllowUpdateHashMismatch. A failing module file stops
++#                     startup, like a failing core update. Needs LoginDatabase.SqlPath.
++#        Default:     1 - (Enabled)
++#                     0 - (Disabled)
++
++Updates.Modules = 1
++
++#
++#    Updates.ModulesSqlPath
++#        Description: Folder that contains the module folders (<module>/data/sql/...).
++#        Example:     "D:/SkyFire/modules" or "/opt/skyfire/modules"
++#        Default:     "" - (The modules folder next to the SqlPath folder)
++
++Updates.ModulesSqlPath = ""
++
+ #
+ #    LoginDatabase.WorkerThreads
+ #        Description: The amount of worker threads spawned to handle asynchronous (delayed) MySQL
+diff --git a/src/server/shared/Database/DatabaseSetup/DatabaseSetup.cpp b/src/server/shared/Database/DatabaseSetup/DatabaseSetup.cpp
+index 5ad503786f..de0b60d1c2 100644
+--- a/src/server/shared/Database/DatabaseSetup/DatabaseSetup.cpp
++++ b/src/server/shared/Database/DatabaseSetup/DatabaseSetup.cpp
+@@ -281,6 +281,68 @@ namespace Database
+             scanner.resume = 0;
+             return true;
+         }
++
++        std::vector<SqlUpdateFile> DiscoverSqlUpdatesInDirectory(std::filesystem::path directory)
++        {
++            directory.make_preferred();
++            if (!std::filesystem::exists(directory) || !std::filesystem::is_directory(directory))
++                return {};
++
++            std::vector<std::string> names;
++            for (std::filesystem::directory_entry const& entry : std::filesystem::directory_iterator(directory))
++            {
++                if (entry.is_regular_file())
++                    names.push_back(entry.path().filename().string());
++            }
++
++            std::vector<SqlUpdateFile> updates = BuildSortedSqlUpdateList(names, directory.string());
++            for (SqlUpdateFile& update : updates)
++            {
++                std::string contents;
++                if (ReadTextFile(update.Path, contents))
++                    update.Hash = CalculateStableSqlHash(contents);
++            }
++
++            return updates;
++        }
++
++        // Module files are recorded as "<module>/<file>" in the same tracking table, so they can never
++        // collide with a core update and the module is visible in the audit rows.
++        std::vector<SqlUpdateFile> AppendModuleSqlUpdates(SetupOptions const& options,
++            std::vector<SqlUpdateFile> updates)
++        {
++            if (!options.ImportModuleUpdates || options.ModuleUpdatesDirectory.empty())
++                return updates;
++
++            std::filesystem::path modulesPath = options.ModulesSqlPath.empty()
++                ? std::filesystem::path(options.SqlPath) / ".." / "modules"
++                : std::filesystem::path(options.ModulesSqlPath);
++            modulesPath = modulesPath.lexically_normal().make_preferred();
++            if (!std::filesystem::exists(modulesPath) || !std::filesystem::is_directory(modulesPath))
++                return updates;
++
++            std::vector<std::string> modules;
++            for (std::filesystem::directory_entry const& entry : std::filesystem::directory_iterator(modulesPath))
++            {
++                if (entry.is_directory())
++                    modules.push_back(entry.path().filename().string());
++            }
++
++            std::sort(modules.begin(), modules.end());
++            for (std::string const& module : modules)
++            {
++                std::vector<SqlUpdateFile> moduleUpdates =
++                    DiscoverSqlUpdatesInDirectory(modulesPath / module / options.ModuleUpdatesDirectory);
++                for (SqlUpdateFile& update : moduleUpdates)
++                {
++                    update.Name = module + "/" + update.Name;
++                    update.Module = module;
++                    updates.push_back(std::move(update));
++                }
++            }
++
++            return updates;
++        }
+     }
+ 
+     bool SetupPlan::IsValid() const
+@@ -304,6 +366,7 @@ namespace Database
+         options.BaseFileName = "auth_database.sql";
+         options.UpdatesDirectory = "updates/auth";
+         options.PendingUpdatesDirectory = "pending_updates/auth";
++        options.ModuleUpdatesDirectory = "data/sql/db-auth";
+ 
+         return options;
+     }
+@@ -324,6 +387,7 @@ namespace Database
+         options.BaseFileName = "characters_database.sql";
+         options.UpdatesDirectory = "updates/characters";
+         options.PendingUpdatesDirectory = "pending_updates/characters";
++        options.ModuleUpdatesDirectory = "data/sql/db-characters";
+ 
+         return options;
+     }
+@@ -348,6 +412,7 @@ namespace Database
+         options.RequiredBaseFileNames.push_back("stored_procs.sql");
+         options.UpdatesDirectory = "updates/world";
+         options.PendingUpdatesDirectory = "pending_updates/world";
++        options.ModuleUpdatesDirectory = "data/sql/db-world";
+ 
+         return options;
+     }
+@@ -378,40 +443,16 @@ namespace Database
+         if (options.SqlPath.empty())
+             return {};
+ 
+-        auto discoverFromDirectory = [](std::filesystem::path directory) -> std::vector<SqlUpdateFile>
+-        {
+-            directory.make_preferred();
+-            if (!std::filesystem::exists(directory) || !std::filesystem::is_directory(directory))
+-                return {};
+-
+-            std::vector<std::string> names;
+-            for (std::filesystem::directory_entry const& entry : std::filesystem::directory_iterator(directory))
+-            {
+-                if (entry.is_regular_file())
+-                    names.push_back(entry.path().filename().string());
+-            }
+-
+-            std::vector<SqlUpdateFile> updates = BuildSortedSqlUpdateList(names, directory.string());
+-            for (SqlUpdateFile& update : updates)
+-            {
+-                std::string contents;
+-                if (ReadTextFile(update.Path, contents))
+-                    update.Hash = CalculateStableSqlHash(contents);
+-            }
+-
+-            return updates;
+-        };
+-
+         std::vector<SqlUpdateFile> updates =
+-            discoverFromDirectory(std::filesystem::path(options.SqlPath) / options.UpdatesDirectory);
++            DiscoverSqlUpdatesInDirectory(std::filesystem::path(options.SqlPath) / options.UpdatesDirectory);
+ 
+         if (!options.ImportPendingUpdates || options.PendingUpdatesDirectory.empty())
+-            return updates;
++            return AppendModuleSqlUpdates(options, std::move(updates));
+ 
+         std::vector<SqlUpdateFile> pendingUpdates =
+-            discoverFromDirectory(std::filesystem::path(options.SqlPath) / options.PendingUpdatesDirectory);
++            DiscoverSqlUpdatesInDirectory(std::filesystem::path(options.SqlPath) / options.PendingUpdatesDirectory);
+         if (pendingUpdates.empty())
+-            return updates;
++            return AppendModuleSqlUpdates(options, std::move(updates));
+ 
+         std::set<std::string> knownNames;
+         for (SqlUpdateFile const& update : updates)
+@@ -430,7 +471,7 @@ namespace Database
+             return left.Name < right.Name;
+         });
+ 
+-        return updates;
++        return AppendModuleSqlUpdates(options, std::move(updates));
+     }
+ 
+     std::vector<std::string> SplitSqlStatements(std::string const& sql)
+@@ -687,7 +728,12 @@ namespace Database
+             }
+ 
+             plan.ShouldBaselineUpdates = true;
+-            plan.BaselineUpdates = updates;
++            for (SqlUpdateFile const& update : updates)
++            {
++                // Module files were never part of the baselined schema; they run on the next start.
++                if (update.Module.empty())
++                    plan.BaselineUpdates.push_back(update);
++            }
+             for (SqlUpdateFile const& update : plan.BaselineUpdates)
+             {
+                 if (update.Hash.empty())
+diff --git a/src/server/shared/Database/DatabaseSetup/DatabaseSetup.h b/src/server/shared/Database/DatabaseSetup/DatabaseSetup.h
+index 0bd517ad25..bc5516362d 100644
+--- a/src/server/shared/Database/DatabaseSetup/DatabaseSetup.h
++++ b/src/server/shared/Database/DatabaseSetup/DatabaseSetup.h
+@@ -26,6 +26,7 @@ namespace Database
+         bool AutoBaseline = false;
+         bool AllowUpdateHashMismatch = false;
+         bool ImportPendingUpdates = false;
++        bool ImportModuleUpdates = false;
+         std::string Domain;
+         std::string SqlPath;
+         std::string BaseFileName;
+@@ -33,6 +34,8 @@ namespace Database
+         std::vector<std::string> RequiredBaseFileNames;
+         std::string UpdatesDirectory;
+         std::string PendingUpdatesDirectory;
++        std::string ModulesSqlPath;
++        std::string ModuleUpdatesDirectory;
+     };
+ 
+     struct SetupState
+@@ -49,6 +52,7 @@ namespace Database
+         std::string Name;
+         std::string Path;
+         std::string Hash;
++        std::string Module;
+     };
+ 
+     struct SqlStatementContext
+diff --git a/src/server/worldserver/Master.cpp b/src/server/worldserver/Master.cpp
+index 6baf5d9cdb..ad76fe3747 100644
+--- a/src/server/worldserver/Master.cpp
++++ b/src/server/worldserver/Master.cpp
+@@ -66,6 +66,8 @@ namespace
+             sConfigMgr->GetBoolDefault("CharacterDatabase.AllowUpdateHashMismatch", true);
+         options.ImportPendingUpdates =
+             sConfigMgr->GetBoolDefault("CharacterDatabase.ImportPendingUpdates", false);
++        options.ImportModuleUpdates = sConfigMgr->GetBoolDefault("Updates.Modules", true);
++        options.ModulesSqlPath = sConfigMgr->GetStringDefault("Updates.ModulesSqlPath", "");
+ 
+         return options;
+     }
+@@ -83,6 +85,8 @@ namespace
+             sConfigMgr->GetBoolDefault("WorldDatabase.AllowUpdateHashMismatch", true);
+         options.ImportPendingUpdates =
+             sConfigMgr->GetBoolDefault("WorldDatabase.ImportPendingUpdates", false);
++        options.ImportModuleUpdates = sConfigMgr->GetBoolDefault("Updates.Modules", true);
++        options.ModulesSqlPath = sConfigMgr->GetStringDefault("Updates.ModulesSqlPath", "");
+ 
+         return options;
+     }
+diff --git a/src/server/worldserver/worldserver.conf.dist b/src/server/worldserver/worldserver.conf.dist
+index dbab5b2639..3397c13289 100644
+--- a/src/server/worldserver/worldserver.conf.dist
++++ b/src/server/worldserver/worldserver.conf.dist
+@@ -244,6 +244,29 @@ CharacterDatabase.ImportPendingUpdates = 0
+ 
+ CharacterDatabase.SqlPath = ""
+ 
++#
++#    Updates.Modules
++#        Description: Also applies SQL files that modules ship in
++#                     modules/<module>/data/sql/db-world and db-characters
++#                     during startup update checks, after the core updates and before data loads.
++#        Important:   Files run once, in module name order and then file name order, and are
++#                     recorded in skyfire_db_updates as <module>/<file>. A module file edited
++#                     after it was applied is handled like an edited core update, see
++#                     WorldDatabase.AllowUpdateHashMismatch. A failing module file stops
++#                     startup, like a failing core update. Each database needs its SqlPath set.
++#        Default:     1 - (Enabled)
++#                     0 - (Disabled)
++
++Updates.Modules = 1
++
++#
++#    Updates.ModulesSqlPath
++#        Description: Folder that contains the module folders (<module>/data/sql/...).
++#        Example:     "D:/SkyFire/modules" or "/opt/skyfire/modules"
++#        Default:     "" - (The modules folder next to the SqlPath folder)
++
++Updates.ModulesSqlPath = ""
++
+ #
+ #    LoginDatabase.WorkerThreads
+ #    WorldDatabase.WorkerThreads
+diff --git a/src/tests/DatabaseSetupTests.cpp b/src/tests/DatabaseSetupTests.cpp
+index a5594a115e..e0b05a0e12 100644
+--- a/src/tests/DatabaseSetupTests.cpp
++++ b/src/tests/DatabaseSetupTests.cpp
+@@ -629,6 +629,125 @@ namespace
+         return passed;
+     }
+ 
++    bool TestModuleSqlUpdatesAreDiscoveredPerModule()
++    {
++        std::filesystem::path root = std::filesystem::temp_directory_path() / "skyfire_module_sql_tests";
++        std::filesystem::path sqlDir = root / "sql";
++        std::filesystem::path updatesDir = sqlDir / "updates" / "world";
++        std::filesystem::path modulesDir = root / "modules";
++
++        std::filesystem::remove_all(root);
++        std::filesystem::create_directories(updatesDir);
++        std::filesystem::create_directories(modulesDir / "mod-b" / "data" / "sql" / "db-world");
++        std::filesystem::create_directories(modulesDir / "mod-a" / "data" / "sql" / "db-world");
++        std::filesystem::create_directories(modulesDir / "mod-a" / "data" / "sql" / "db-auth");
++        std::filesystem::create_directories(modulesDir / "mod-c" / "data" / "sql" / "uninstall");
++
++        std::ofstream(updatesDir / "2026_01_01_00_world.sql") << "SELECT 1;";
++        std::ofstream(modulesDir / "mod-b" / "data" / "sql" / "db-world" / "2026_01_01_00.sql") << "SELECT 2;";
++        std::ofstream(modulesDir / "mod-a" / "data" / "sql" / "db-world" / "b.sql") << "SELECT 3;";
++        std::ofstream(modulesDir / "mod-a" / "data" / "sql" / "db-world" / "a.sql") << "SELECT 4;";
++        std::ofstream(modulesDir / "mod-a" / "data" / "sql" / "db-auth" / "auth.sql") << "SELECT 5;";
++        std::ofstream(modulesDir / "mod-c" / "data" / "sql" / "uninstall" / "remove.sql") << "SELECT 6;";
++
++        Skyfire::Database::SetupOptions options =
++            Skyfire::Database::MakeWorldDatabaseSetupOptions(true, false, sqlDir.string(), "");
++
++        bool passed = true;
++        passed &= Expect(!options.ImportModuleUpdates, "Module updates should default off in the options");
++        passed &= Expect(Skyfire::Database::DiscoverSqlUpdates(options).size() == 1,
++            "World discovery should ignore modules when module updates are disabled");
++
++        options.ImportModuleUpdates = true;
++        std::vector<Skyfire::Database::SqlUpdateFile> updates =
++            Skyfire::Database::DiscoverSqlUpdates(options);
++
++        passed &= Expect(updates.size() == 4, "World discovery should add the db-world files of every module");
++        passed &= Expect(updates[0].Name == "2026_01_01_00_world.sql", "Core updates should come before module files");
++        passed &= Expect(updates[0].Module.empty(), "Core updates should not be marked as module files");
++        passed &= Expect(updates[1].Name == "mod-a/a.sql", "Module files should sort by file name inside a module");
++        passed &= Expect(updates[2].Name == "mod-a/b.sql", "Module files should be recorded as module/file");
++        passed &= Expect(updates[3].Name == "mod-b/2026_01_01_00.sql", "Modules should be applied in name order");
++        passed &= Expect(updates[1].Module == "mod-a", "Module files should carry the module name");
++        passed &= ExpectEqual(updates[1].Path,
++            (modulesDir / "mod-a" / "data" / "sql" / "db-world" / "a.sql").make_preferred().string(),
++            "Module files should resolve to the module folder next to the SQL root");
++        passed &= Expect(updates[1].Hash == Skyfire::Database::CalculateStableSqlHash("SELECT 4;"),
++            "Module files should be hashed so edits are detected");
++
++        options.ModulesSqlPath = (root / "missing").string();
++        passed &= Expect(Skyfire::Database::DiscoverSqlUpdates(options).size() == 1,
++            "A missing module folder should add nothing");
++
++        std::filesystem::remove_all(root);
++
++        return passed;
++    }
++
++    bool TestModuleSqlUpdatesAreNotBaselined()
++    {
++        Skyfire::Database::SetupOptions options = Skyfire::Database::MakeAuthDatabaseSetupOptions(true, false, true, "sql");
++
++        Skyfire::Database::SetupState state;
++        state.DatabaseExists = true;
++        state.SchemaTableCount = 12;
++        state.UpdateTrackingExists = false;
++
++        std::vector<Skyfire::Database::SqlUpdateFile> updates =
++        {
++            { "2026-01-23_auth_00.sql", "sql/updates/auth/2026-01-23_auth_00.sql", "hash-a", "" },
++            { "mod-a/auth.sql", "modules/mod-a/data/sql/db-auth/auth.sql", "hash-b", "mod-a" }
++        };
++
++        Skyfire::Database::SetupPlan plan =
++            Skyfire::Database::BuildAuthDatabaseSetupPlan(options, state, true, updates);
++
++        bool passed = true;
++        passed &= Expect(plan.IsValid(), "Baseline mode should stay valid with module files present");
++        passed &= Expect(plan.BaselineUpdates.size() == 1, "Baseline mode should not record module files as applied");
++        passed &= Expect(plan.BaselineUpdates[0].Name == "2026-01-23_auth_00.sql", "Baseline mode should keep core updates");
++
++        return passed;
++    }
++
++    bool TestModuleSqlUpdatesFollowTheUpdateTracking()
++    {
++        Skyfire::Database::SetupOptions options = Skyfire::Database::MakeWorldDatabaseSetupOptions(true, false, "sql", "");
++        options.AllowUpdateHashMismatch = true;
++
++        Skyfire::Database::SetupState state;
++        state.DatabaseExists = true;
++        state.SchemaTableCount = 12;
++        state.UpdateTrackingExists = true;
++        state.AppliedUpdates.insert("mod-a/a.sql");
++        state.AppliedUpdates.insert("mod-a/b.sql");
++        state.AppliedUpdateHashes["mod-a/a.sql"] = "hash-a";
++        state.AppliedUpdateHashes["mod-a/b.sql"] = "old-hash";
++
++        std::vector<Skyfire::Database::SqlUpdateFile> updates =
++        {
++            { "mod-a/a.sql", "modules/mod-a/data/sql/db-world/a.sql", "hash-a", "mod-a" },
++            { "mod-a/b.sql", "modules/mod-a/data/sql/db-world/b.sql", "new-hash", "mod-a" },
++            { "mod-a/c.sql", "modules/mod-a/data/sql/db-world/c.sql", "hash-c", "mod-a" }
++        };
++
++        Skyfire::Database::SetupPlan plan =
++            Skyfire::Database::BuildWorldDatabaseSetupPlan(options, state, true, true, updates);
++
++        bool passed = true;
++        passed &= Expect(plan.IsValid(), "Module files should be accepted by the world setup plan");
++        passed &= Expect(plan.PendingUpdates.size() == 1, "Only new module files should be pending");
++        passed &= Expect(plan.PendingUpdates[0].Name == "mod-a/c.sql", "The new module file should be pending");
++        passed &= Expect(plan.HashMismatchedUpdates.size() == 1, "An edited module file should be reported, not re-run");
++        passed &= Expect(plan.HashMismatchedUpdates[0].Name == "mod-a/b.sql", "The edited module file should be reported");
++
++        options.AllowUpdateHashMismatch = false;
++        plan = Skyfire::Database::BuildWorldDatabaseSetupPlan(options, state, true, true, updates);
++        passed &= Expect(!plan.IsValid(), "Strict hash validation should reject an edited module file");
++
++        return passed;
++    }
++
+     bool TestSqlScriptSplitsStatementsSafely()
+     {
+         std::string sql =
+@@ -874,6 +993,9 @@ int main()
+     passed &= TestExistingAuthDatabaseBaselineRequiresHashes();
+     passed &= TestMissingDatabaseRequiresAutoCreate();
+     passed &= TestSqlUpdatesAreDiscoveredFromConfiguredRoot();
++    passed &= TestModuleSqlUpdatesAreDiscoveredPerModule();
++    passed &= TestModuleSqlUpdatesAreNotBaselined();
++    passed &= TestModuleSqlUpdatesFollowTheUpdateTracking();
+     passed &= TestSqlScriptSplitsStatementsSafely();
+     passed &= TestSqlScriptIgnoresQuotesInsideComments();
+     passed &= TestSqlScriptSplitsDelimiterStatements();

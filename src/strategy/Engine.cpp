@@ -1,0 +1,851 @@
+/*
+ * Copyright (C) 2016+ AzerothCore <www.azerothcore.org>, released under GNU GPL v2 license, you may redistribute it
+ * and/or modify it under version 2 of the License, or (at your option), any later version.
+ */
+
+#include "Engine.h"
+
+#include "Action.h"
+#include "BotScenario.h"
+#include "Event.h"
+#include "Creature.h"
+#include "Group.h"
+#include "Log.h"
+#include "Timer.h"
+#include "FollowGapPolicy.h"
+#include "Helper.h"
+#include "LootObjectStack.h"
+#include "Playerbots.h"
+#include "PlayerbotAIConfig.h"
+#include "PerformanceMonitor.h"
+#include "Queue.h"
+#include "Strategy.h"
+#include "StuckMember.h"
+#include "TankStandoff.h"
+
+Engine::Engine(PlayerbotAI* botAI, AiObjectContext* factory) : PlayerbotAIAware(botAI), aiObjectContext(factory)
+{
+    lastRelevance = 0.0f;
+    testMode = false;
+}
+
+bool ActionExecutionListeners::Before(Action* action, Event event)
+{
+    bool result = true;
+    for (std::list<ActionExecutionListener*>::iterator i = listeners.begin(); i != listeners.end(); i++)
+    {
+        result &= (*i)->Before(action, event);
+    }
+
+    return result;
+}
+
+void ActionExecutionListeners::After(Action* action, bool executed, Event event)
+{
+    for (std::list<ActionExecutionListener*>::iterator i = listeners.begin(); i != listeners.end(); i++)
+    {
+        (*i)->After(action, executed, event);
+    }
+}
+
+bool ActionExecutionListeners::OverrideResult(Action* action, bool executed, Event event)
+{
+    bool result = executed;
+    for (std::list<ActionExecutionListener*>::iterator i = listeners.begin(); i != listeners.end(); i++)
+    {
+        result = (*i)->OverrideResult(action, result, event);
+    }
+
+    return result;
+}
+
+bool ActionExecutionListeners::AllowExecution(Action* action, Event event)
+{
+    bool result = true;
+    for (std::list<ActionExecutionListener*>::iterator i = listeners.begin(); i != listeners.end(); i++)
+    {
+        result &= (*i)->AllowExecution(action, event);
+    }
+
+    return result;
+}
+
+ActionExecutionListeners::~ActionExecutionListeners()
+{
+    for (std::list<ActionExecutionListener*>::iterator i = listeners.begin(); i != listeners.end(); i++)
+    {
+        delete *i;
+    }
+
+    listeners.clear();
+}
+
+Engine::~Engine(void)
+{
+    Reset();
+
+    // for (std::map<std::string, Strategy*>::iterator i = strategies.begin(); i != strategies.end(); i++)
+    // {
+    //     Strategy* strategy = i->second;
+    //     if (strategy) {
+    //         delete strategy;
+    //     }
+    // }
+
+    strategies.clear();
+}
+
+void Engine::Reset()
+{
+    strategyTypeMask = 0;
+    ActionNode* action = nullptr;
+    do
+    {
+        action = queue.Pop();
+        if (!action)
+            break;
+
+        delete action;
+    } while (true);
+
+    for (std::vector<TriggerNode*>::iterator i = triggers.begin(); i != triggers.end(); i++)
+    {
+        TriggerNode* trigger = *i;
+        delete trigger;
+    }
+
+    triggers.clear();
+
+    for (std::vector<Multiplier*>::iterator i = multipliers.begin(); i != multipliers.end(); i++)
+    {
+        Multiplier* multiplier = *i;
+        delete multiplier;
+    }
+
+    multipliers.clear();
+
+    actionNodeFactories.creators.clear();  // #72: AC Engine.cpp:115
+}
+
+void Engine::Init()
+{
+    Reset();
+
+    hasTargetExclusions = false;  // AC Engine.cpp:122
+    for (std::map<std::string, Strategy*>::iterator i = strategies.begin(); i != strategies.end(); i++)
+    {
+        Strategy* strategy = i->second;
+        strategyTypeMask |= strategy->GetType();
+        hasTargetExclusions |= strategy->HasTargetExclusions();  // AC Engine.cpp:127
+        strategy->InitMultipliers(multipliers);
+        strategy->InitTriggers(triggers);
+
+        // #72 perf: AC Engine.cpp:130-133 - one engine-level action-node map, built here. CreateActionNode walked
+        // every active strategy's factories with a string lookup each, on every push. As in AC, a later strategy
+        // (std::map order) overrides an earlier one for a node name several strategies define.
+        for (auto const& iter : strategy->actionNodeFactories.creators)
+            actionNodeFactories.creators[iter.first] = iter.second;
+    }
+
+    if (testMode)
+    {
+        FILE* file = fopen("test.log", "w");
+        fprintf(file, "\n");
+        fclose(file);
+    }
+}
+
+bool Engine::DoNextAction(Unit* unit, uint32 depth, bool minimal)
+{
+    LogAction("--- AI Tick ---");
+
+    if (sPlayerbotAIConfig->logValuesPerTick)
+        LogValues();
+
+    Player* bot = botAI->GetBot();
+    // BT-155: sample only when this bot is idle and a group member is fighting.
+    constexpr uint32 DEFEND_LOG_INTERVAL_MS = 2000;
+    uint32 const defendNow = getMSTime();
+    bool defendSample = false;
+    uint32 defendAttackers = 0;
+    // BT-168: creatures that hold a group member in combat whether or not they attack it (a stationary mob an area
+    // spell woke shows here, never in the attackers count).
+    uint32 defendHostiles = 0;
+    Unit* defendNearest = nullptr;
+    if (!bot->IsInCombat() && bot->GetGroup() &&
+        (!botAI->lastDefendLogMs || defendNow - botAI->lastDefendLogMs >= DEFEND_LOG_INTERVAL_MS))
+    {
+        Group* group = bot->GetGroup();
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* member = ref->GetSource();
+            if (member && member != bot && member->FindMap() == bot->FindMap() && member->IsInCombat())
+                defendSample = true;
+        }
+        if (defendSample)
+        {
+            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+            {
+                Player* member = ref->GetSource();
+                if (!member || member->FindMap() != bot->FindMap())
+                    continue;
+                for (HostileReference* hostile = member->getHostileRefManager().getFirst(); hostile; hostile = hostile->next())
+                {
+                    Unit* holder = hostile->GetSource()->GetOwner();
+                    if (holder && holder->ToCreature() && holder->IsAlive())
+                        ++defendHostiles;
+                }
+                for (Unit* attacker : member->getAttackers())
+                    if (attacker && attacker->ToCreature() && attacker->IsAlive() &&
+                        attacker->GetVictim() == member && member->IsHostileTo(attacker))
+                    {
+                        ++defendAttackers;
+                        if (!defendNearest || bot->GetDistance(attacker) < bot->GetDistance(defendNearest))
+                            defendNearest = attacker;
+                    }
+            }
+        }
+    }
+    std::string defendDecision = "no action executed";
+    std::string defendTrigger = "none";
+    bool actionExecuted = false;
+    ActionBasket* basket = nullptr;
+    time_t currentTime = time(nullptr);
+
+    // BT-183 (FollowGapPolicy.h): a bot out of combat that stays far from the leader names what it does instead of
+    // following. The decision and trigger strings below are filled for this sample as for the [DEFEND] one.
+    // BT-189: minimal ticks are sampled too (the line says so), and a resting bot keeps its far clock across the sleep
+    // of its drink, so a bot that drinks far from the leader is named like any other.
+    bool followSample = false;
+    Player* followLeader = nullptr;
+    float followDistance = 0.0f;
+    bool const followResting = bot->IsSitState();
+    FollowGapPolicy::State& followState = botAI->followGap;
+    if (FollowGapPolicy::Due(followState, currentTime))
+    {
+        bool far = false;
+        if (bot->IsAlive() && !bot->IsInCombat() && bot->GetGroup() && !bot->InBattleground())
+        {
+            followLeader = botAI->GetGroupMaster();
+            if (followLeader && followLeader != bot && followLeader->IsInWorld() &&
+                followLeader->FindMap() == bot->FindMap())
+            {
+                followDistance = bot->GetDistance(followLeader);
+                far = followDistance > FollowGapPolicy::FAR_YARDS;
+            }
+        }
+        followSample = FollowGapPolicy::Read(followState, far, currentTime, followResting);
+    }
+    // BT-194: a tank whose target loses no health names the target and what it does.
+    bool const tankSample = TankStandoff::Observe(botAI);
+    // BT-201: a bot flagged in combat, far from every member and standing still is invisible to the two samplers above
+    // (both need a bot out of combat), so it has its own reading and writes both lines.
+    bool const stuckSample = StuckMember::Observe(botAI);
+    bool const sampleDecision = defendSample || followSample || tankSample || stuckSample;
+
+    // #628 (AC Engine.cpp:155-156)
+    if (!minimal)
+        botAI->forceRebuff.RollBuffPendingCycle();
+
+    // Update triggers and push default actions
+    defendTriggersChecked = 0;
+    defendTriggersFired = 0;
+    ProcessTriggers(minimal);
+    PushDefaultActions();
+
+    uint32 iterations = 0;
+    uint32 iterationsPerTick = queue.Size() * (minimal ? 2 : sPlayerbotAIConfig->iterationsPerTick);
+    
+    while (++iterations <= iterationsPerTick)
+    {
+        basket = queue.Peek();
+        if (!basket)
+            break;
+
+        float relevance = basket->getRelevance();  // for reference
+        bool skipPrerequisites = basket->isSkipPrerequisites();
+
+        if (minimal && (relevance < 100))
+            continue;
+
+        Event event = basket->getEvent();
+        if (sampleDecision)
+            defendTrigger = event.GetSource().empty() ? "none (default action)" : event.GetSource();
+        ActionNode* actionNode = queue.Pop();  // NOTE: Pop() deletes basket
+        Action* action = InitializeAction(actionNode);
+
+        if (!action)
+        {
+            LogAction("A:%s - UNKNOWN", actionNode->getName().c_str());
+        }
+        else if (action->isUseful())
+        {
+            // Apply multipliers early to avoid unnecessary iterations
+            for (Multiplier* multiplier : multipliers)
+            {
+                relevance *= multiplier->GetValue(action);
+                action->setRelevance(relevance);
+
+                if (relevance <= 0)
+                {
+                    LogAction("Multiplier %s made action %s useless", multiplier->getName().c_str(), action->getName().c_str());
+                    break;
+                }
+            }
+
+            if (action->isPossible() && relevance > 0)
+            {
+                if (!skipPrerequisites)
+                {
+                    LogAction("A:%s - PREREQ", action->getName().c_str());
+
+                    if (MultiplyAndPush(actionNode->getPrerequisites(), relevance + 0.002f, false, event, "prereq"))
+                    {
+                        PushAgain(actionNode, relevance + 0.001f, event);
+                        continue;
+                    }
+                }
+
+                PerformanceMonitorOperation* pmo = sPerformanceMonitor->start(PERF_MON_ACTION, action->getName(), &aiObjectContext->performanceStack);
+                actionExecuted = ListenAndExecute(action, event);
+                if (pmo)
+                    pmo->finish();
+
+                if (actionExecuted)
+                {
+                    if (sampleDecision)
+                        defendDecision = action->getName() + " OK";
+                    LogAction("A:%s - OK", action->getName().c_str());
+                    BotScenario::OnAction(botAI->GetBot(), action->getName().c_str(), "OK");
+                    MultiplyAndPush(actionNode->getContinuers(), relevance, false, event, "cont");
+                    lastRelevance = relevance;
+                    delete actionNode;  // Safe memory management
+                    break;
+                }
+                else
+                {
+                    if (sampleDecision)
+                        defendDecision = action->getName() + " failed";
+                    LogAction("A:%s - FAILED", action->getName().c_str());
+                    BotScenario::OnAction(botAI->GetBot(), action->getName().c_str(), "FAILED");
+                    MultiplyAndPush(actionNode->getAlternatives(), relevance + 0.003f, false, event, "alt");
+                }
+            }
+            else
+            {
+                if (sampleDecision)
+                    defendDecision = action->getName() + " impossible or suppressed";
+                LogAction("A:%s - IMPOSSIBLE", action->getName().c_str());
+                BotScenario::OnAction(botAI->GetBot(), action->getName().c_str(), "IMPOSSIBLE");
+                MultiplyAndPush(actionNode->getAlternatives(), relevance + 0.003f, false, event, "alt");
+            }
+        }
+        else
+        {
+            if (sampleDecision)
+                defendDecision = action->getName() + " not useful";
+            LogAction("A:%s - USELESS", action->getName().c_str());
+            BotScenario::OnAction(botAI->GetBot(), action->getName().c_str(), "USELESS");
+            lastRelevance = relevance;
+        }
+
+        delete actionNode;  // Always delete after processing the action node
+    }
+
+    if (time(nullptr) - currentTime > 1)
+    {
+        LogAction("Execution time exceeded 1 second");
+    }
+
+    if (!actionExecuted)
+        LogAction("No actions executed");
+
+    if (defendSample && !bot->IsInCombat())
+    {
+        botAI->lastDefendLogMs = defendNow;
+        Unit* tankTarget = aiObjectContext->GetValue<Unit*>("tank target")->Get();
+        Unit* currentTarget = aiObjectContext->GetValue<Unit*>("current target")->Get();
+        SF_LOG_INFO("playerbots", "[DEFEND] bot=%s attackers=%u hostiles=%u nearest=%s los=%s tank_target=%s current_target=%s trigger=%s checked=%u fired=%u decision=%s",
+                    bot->GetName().c_str(), defendAttackers, defendHostiles, defendNearest ? defendNearest->GetName().c_str() : "none",
+                    defendNearest ? (bot->IsWithinLOSInMap(defendNearest) ? "yes" : "no") : "n/a",
+                    tankTarget ? tankTarget->GetName().c_str() : "none", currentTarget ? currentTarget->GetName().c_str() : "none",
+                    defendTrigger.c_str(), defendTriggersChecked, defendTriggersFired, defendDecision.c_str());
+    }
+
+    if (tankSample)
+        TankStandoff::Report(botAI, defendDecision);
+
+    if (stuckSample)
+        StuckMember::Report(botAI, defendTrigger, defendDecision, defendTriggersChecked, defendTriggersFired, minimal);
+
+    if (followSample && !bot->IsInCombat())
+    {
+        followState.loggedAt = currentTime;
+        Action* follow = aiObjectContext->GetAction("follow");
+        LootObject loot = aiObjectContext->GetValue<LootObject>("loot target")->Get();
+        WorldObject* lootObject = loot.IsEmpty() ? nullptr : loot.GetWorldObject(bot);
+        SF_LOG_INFO("playerbots", "[FOLLOW] bot=%s leader=%s dist=%.1f far_for=%us follow=%s stay=%u moving=%u "
+                    "resting=%u minimal=%u loot=%u loot_dist=%.1f trigger=%s decision=%s",
+                    bot->GetName().c_str(), followLeader->GetName().c_str(), followDistance,
+                    unsigned(currentTime - followState.farSince),
+                    !follow ? "none" : (follow->isUseful() ? "useful" : "not useful"),
+                    uint32(botAI->HasStrategy("stay", BOT_STATE_NON_COMBAT)), uint32(bot->isMoving()),
+                    uint32(followResting), uint32(minimal),
+                    lootObject ? lootObject->GetEntry() : 0u, lootObject ? bot->GetDistance(lootObject) : 0.0f,
+                    defendTrigger.c_str(), defendDecision.c_str());
+    }
+
+    queue.RemoveExpired();  // Clean up expired actions in the queue
+    return actionExecuted;
+}
+
+ActionNode* Engine::CreateActionNode(std::string const name)
+{
+    // #72 perf: AC Engine.cpp:264-269
+    if (ActionNode* node = actionNodeFactories.GetContextObject(name, botAI))
+        return node;
+
+    return new ActionNode(name,
+                          /*P*/ nullptr,
+                          /*A*/ nullptr,
+                          /*C*/ nullptr);
+}
+
+bool Engine::MultiplyAndPush(NextAction** actions, float forceRelevance, bool skipPrerequisites, Event event,
+                             char const* pushType)
+{
+    bool pushed = false;
+    if (actions)
+    {
+        for (uint32 j = 0; actions[j]; j++)
+        {
+            if (NextAction* nextAction = actions[j])
+            {
+                ActionNode* action = CreateActionNode(nextAction->getName());
+                InitializeAction(action);
+
+                float k = nextAction->getRelevance();
+                if (forceRelevance > 0.0f)
+                {
+                    k = forceRelevance;
+                }
+
+                if (k > 0)
+                {
+                    LogAction("PUSH:%s - %f (%s)", action->getName().c_str(), k, pushType);
+                    queue.Push(new ActionBasket(action, k, skipPrerequisites, event));
+                    pushed = true;
+                }
+                else
+                {
+                    delete action;
+                }
+
+                delete nextAction;
+            }
+            else
+                break;
+        }
+
+        delete[] actions;
+    }
+
+    return pushed;
+}
+
+ActionResult Engine::ExecuteAction(std::string const name, Event event, std::string const qualifier)
+{
+    bool result = false;
+
+    ActionNode* actionNode = CreateActionNode(name);
+    if (!actionNode)
+        return ACTION_RESULT_UNKNOWN;
+
+    Action* action = InitializeAction(actionNode);
+    if (!action)
+    {
+        delete actionNode;
+        return ACTION_RESULT_UNKNOWN;
+    }
+
+    if (!qualifier.empty())
+    {
+        if (Qualified* q = dynamic_cast<Qualified*>(action))
+            q->Qualify(qualifier);
+    }
+
+    if (!action->isPossible())
+    {
+        delete actionNode;
+        return ACTION_RESULT_IMPOSSIBLE;
+    }
+
+    if (!action->isUseful())
+    {
+        delete actionNode;
+        return ACTION_RESULT_USELESS;
+    }
+
+    action->MakeVerbose();
+
+    result = ListenAndExecute(action, event);
+    MultiplyAndPush(action->getContinuers(), 0.0f, false, event, "default");
+
+    delete actionNode;
+
+    return result ? ACTION_RESULT_OK : ACTION_RESULT_FAILED;
+}
+
+void Engine::addStrategy(std::string const name, bool init)
+{
+    removeStrategy(name, init);
+
+    if (Strategy* strategy = aiObjectContext->GetStrategy(name))
+    {
+        std::set<std::string> siblings = aiObjectContext->GetSiblingStrategy(name);
+        for (std::set<std::string>::iterator i = siblings.begin(); i != siblings.end(); i++)
+            removeStrategy(*i, init);
+
+        LogAction("S:+%s", strategy->getName().c_str());
+        strategies[strategy->getName()] = strategy;
+    }
+    if (init)
+        Init();
+}
+
+void Engine::addStrategies(std::string first, ...)
+{
+    addStrategy(first, false);
+
+    va_list vl;
+    va_start(vl, first);
+
+    const char* cur;
+    do
+    {
+        cur = va_arg(vl, const char*);
+        if (cur)
+            addStrategy(cur, false);
+    } while (cur);
+
+    Init();
+
+    va_end(vl);
+}
+
+void Engine::addStrategiesNoInit(std::string first, ...)
+{
+    addStrategy(first, false);
+
+    va_list vl;
+    va_start(vl, first);
+
+    const char* cur;
+    do
+    {
+        cur = va_arg(vl, const char*);
+        if (cur)
+            addStrategy(cur, false);
+    } while (cur);
+
+    va_end(vl);
+}
+
+
+bool Engine::removeStrategy(std::string const name, bool init)
+{
+    std::map<std::string, Strategy*>::iterator i = strategies.find(name);
+    if (i == strategies.end())
+        return false;
+
+    LogAction("S:-%s", name.c_str());
+    strategies.erase(i);
+    if (init)
+        Init();
+
+    return true;
+}
+
+void Engine::removeAllStrategies()
+{
+    strategies.clear();
+    Init();
+}
+
+void Engine::toggleStrategy(std::string const name)
+{
+    if (!removeStrategy(name))
+        addStrategy(name);
+}
+
+bool Engine::HasStrategy(std::string const name) { return strategies.find(name) != strategies.end(); }
+
+Strategy* Engine::GetStrategy(std::string const name)
+{
+    std::map<std::string, Strategy*>::iterator i = strategies.find(name);
+    return i == strategies.end() ? nullptr : i->second;
+}
+
+void Engine::ProcessTriggers(bool minimal)
+{
+    std::unordered_map<Trigger*, Event> fires;
+    for (std::vector<TriggerNode*>::iterator i = triggers.begin(); i != triggers.end(); i++)
+    {
+        TriggerNode* node = *i;
+        if (!node)
+            continue;
+
+        Trigger* trigger = node->getTrigger();
+        if (!trigger)
+        {
+            trigger = aiObjectContext->GetTrigger(node->getName());
+            node->setTrigger(trigger);
+        }
+
+        if (!trigger)
+            continue;
+
+        if (fires.find(trigger) != fires.end())
+            continue;
+
+        if (testMode || trigger->needCheck())
+        {
+            if (minimal && node->getFirstRelevance() < 100)
+                continue;
+
+            // #72: AC Engine.cpp:475-479 instruments every trigger check (pmon "Trigger" category).
+            PerformanceMonitorOperation* pmo =
+                sPerformanceMonitor->start(PERF_MON_TRIGGER, trigger->getName(), &aiObjectContext->performanceStack);
+            ++defendTriggersChecked;
+            Event event = trigger->Check();
+            if (pmo)
+                pmo->finish();
+
+            if (!event)
+                continue;
+
+            // #628 (AC Engine.cpp:484-485)
+            if (trigger->IsBuffTrigger() && !trigger->IsDebuffTrigger())
+                botAI->forceRebuff.NoteBuffProposed();
+
+            ++defendTriggersFired;
+            fires[trigger] = event;
+            LogAction("T:%s", trigger->getName().c_str());
+        }
+    }
+
+    for (std::vector<TriggerNode*>::iterator i = triggers.begin(); i != triggers.end(); i++)
+    {
+        TriggerNode* node = *i;
+        Trigger* trigger = node->getTrigger();
+        if (fires.find(trigger) == fires.end())
+            continue;
+
+        Event event = fires[trigger];
+        MultiplyAndPush(node->getHandlers(), 0.0f, false, event, "trigger");
+    }
+
+    for (std::vector<TriggerNode*>::iterator i = triggers.begin(); i != triggers.end(); i++)
+    {
+        if (Trigger* trigger = (*i)->getTrigger())
+            trigger->Reset();
+    }
+}
+
+void Engine::PushDefaultActions()
+{
+    for (std::map<std::string, Strategy*>::iterator i = strategies.begin(); i != strategies.end(); i++)
+    {
+        Strategy* strategy = i->second;
+        Event emptyEvent;
+        MultiplyAndPush(strategy->getDefaultActions(), 0.0f, false, emptyEvent, "default");
+    }
+}
+
+std::string const Engine::ListStrategies()
+{
+    std::string s = "Strategies: ";
+
+    if (strategies.empty())
+        return s;
+
+    for (std::map<std::string, Strategy*>::iterator i = strategies.begin(); i != strategies.end(); i++)
+    {
+        s.append(i->first);
+        s.append(", ");
+    }
+
+    return s.substr(0, s.length() - 2);
+}
+
+std::vector<std::string> Engine::GetStrategies()
+{
+    std::vector<std::string> result;
+    for (std::map<std::string, Strategy*>::iterator i = strategies.begin(); i != strategies.end(); i++)
+    {
+        result.push_back(i->first);
+    }
+
+    return result;
+}
+
+void Engine::PushAgain(ActionNode* actionNode, float relevance, Event event)
+{
+    NextAction** nextAction = new NextAction*[2];
+    nextAction[0] = new NextAction(actionNode->getName(), relevance);
+    nextAction[1] = nullptr;
+    MultiplyAndPush(nextAction, relevance, true, event, "again");
+    delete actionNode;
+}
+
+bool Engine::ContainsStrategy(StrategyType type)
+{
+    for (std::map<std::string, Strategy*>::iterator i = strategies.begin(); i != strategies.end(); i++)
+    {
+        if (i->second->GetType() & type)
+            return true;
+    }
+    return false;
+}
+
+Action* Engine::InitializeAction(ActionNode* actionNode)
+{
+    Action* action = actionNode->getAction();
+    if (!action)
+    {
+        action = aiObjectContext->GetAction(actionNode->getName());
+        actionNode->setAction(action);
+    }
+
+    return action;
+}
+
+bool Engine::ListenAndExecute(Action* action, Event event)
+{
+    bool actionExecuted = false;
+
+    if (actionExecutionListeners.Before(action, event))
+    {
+        // A packet LoA's code reads with a layout SkyFire does not send throws ByteBufferException. Uncaught in a map
+        // update thread it ends the whole server, so the action fails and the mismatch is logged instead.
+        try
+        {
+            actionExecuted = actionExecutionListeners.AllowExecution(action, event) ? action->Execute(event) : true;
+        }
+        catch (ByteBufferException const& e)
+        {
+            SF_LOG_ERROR("playerbots", "Bot %s: action '%s' could not read its packet (opcode %u): %s",
+                botAI->GetBot()->GetName().c_str(), action->getName().c_str(), uint32(event.getPacket().GetOpcode()), e.what());
+            actionExecuted = false;
+        }
+    }
+
+    if (botAI->HasStrategy("debug", BOT_STATE_NON_COMBAT))
+    {
+        std::ostringstream out;
+        out << "do: ";
+        out << action->getName();
+
+        if (actionExecuted)
+            out << " 1 (";
+        else
+            out << " 0 (";
+
+        out << action->getRelevance() << ")";
+
+        if (!event.GetSource().empty())
+            out << " [" << event.GetSource() << "]";
+
+        botAI->TellMasterNoFacing(out);
+    }
+
+    actionExecuted = actionExecutionListeners.OverrideResult(action, actionExecuted, event);
+    actionExecutionListeners.After(action, actionExecuted, event);
+    return actionExecuted;
+}
+
+void Engine::LogAction(char const* format, ...)
+{
+    Player* bot = botAI->GetBot();
+    // AC Engine.cpp:621 (#530 item 6). Bots named in AiPlayerbot.DebugBotNames or traced by the .botscenario harness
+    // (BotScenario::WantsTrail) keep their trail regardless - that is this fork's own diagnostic path (#98).
+    if (sPlayerbotAIConfig->logInGroupOnly && (!bot->GetGroup() || !botAI->HasRealPlayerMaster()) && !testMode &&
+        !(!sPlayerbotAIConfig->debugBotNames.empty() && sPlayerbotAIConfig->debugBotNames.count(bot->GetName())) &&
+        !BotScenario::WantsTrail(bot))
+        return;
+
+    char buf[1024];
+
+    va_list ap;
+    va_start(ap, format);
+    vsnprintf(buf, sizeof(buf), format, ap);
+    va_end(ap);
+
+    lastAction += "|";
+    lastAction += buf;
+    if (lastAction.size() > 512)
+    {
+        lastAction = lastAction.substr(512);
+        size_t pos = lastAction.find("|");
+        lastAction = (pos == std::string::npos ? "" : lastAction.substr(pos));
+    }
+
+    if (testMode)
+    {
+        FILE* file = fopen("test.log", "a");
+        fprintf(file, "'%s'", buf);
+        fprintf(file, "\n");
+        fclose(file);
+    }
+    // issue #98 follow-up: this fork's LogAction never routed the per-tick action-decision trail
+    // (PUSH/A:...-OK/FAILED/IMPOSSIBLE/USELESS/"no actions executed"/PREREQ - the WotLK reference's
+    // equivalent line) to the server log at all outside testMode, unlike the reference this was
+    // ported from. Restoring it unconditionally for 100+ bots would flood the log and hurt
+    // performance, so gate it the same way every other per-bot diagnostic in this module already
+    // does (grep sPlayerbotAIConfig->debugBotNames): only emit it for bots explicitly named in
+    // AiPlayerbot.DebugBotNames. Put a bot's name in that list to get its full action-decision
+    // trail without affecting the rest of the population.
+    else if ((!sPlayerbotAIConfig->debugBotNames.empty() && sPlayerbotAIConfig->debugBotNames.count(bot->GetName())) ||
+             BotScenario::WantsTrail(bot))
+    {
+        SF_LOG_DEBUG("playerbots", "%s %s", bot->GetName().c_str(), buf);
+    }
+}
+
+void Engine::ChangeStrategy(std::string const names)
+{
+    std::vector<std::string> splitted = split(names, ',');
+    for (std::vector<std::string>::iterator i = splitted.begin(); i != splitted.end(); i++)
+    {
+        char const* name = i->c_str();
+        switch (name[0])
+        {
+            case '+':
+                addStrategy(name + 1);
+                break;
+            case '-':
+                removeStrategy(name + 1);
+                break;
+            case '~':
+                toggleStrategy(name + 1);
+                break;
+            case '?':
+                botAI->TellMaster(ListStrategies());
+                break;
+        }
+    }
+}
+
+void Engine::LogValues()
+{
+    // AC Engine.cpp:677-688 (#530 item 6); was commented out. FormatValues exists (AiObjectContext.cpp:144).
+    if (testMode)
+        return;
+
+    Player* bot = botAI->GetBot();
+    if (sPlayerbotAIConfig->logInGroupOnly && (!bot->GetGroup() || !botAI->HasRealPlayerMaster()))
+        return;
+
+    std::string const text = botAI->GetAiObjectContext()->FormatValues();
+    SF_LOG_DEBUG("playerbots", "Values for %s: %s", bot->GetName().c_str(), text.c_str());
+}

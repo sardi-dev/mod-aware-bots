@@ -1,0 +1,168 @@
+{
+  "$defs": {
+    "BudgetStatus": {
+      "additionalProperties": false,
+      "properties": {
+        "cap_clamped": {
+          "default": false,
+          "title": "Cap Clamped",
+          "type": "boolean"
+        },
+        "day_alarm": {
+          "default": false,
+          "title": "Day Alarm",
+          "type": "boolean"
+        },
+        "day_cap_usd": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Day Cap Usd"
+        },
+        "day_spent_usd": {
+          "title": "Day Spent Usd",
+          "type": "number"
+        },
+        "exhausted": {
+          "title": "Exhausted",
+          "type": "boolean"
+        },
+        "month_cap_ceiling_usd": {
+          "default": 20.0,
+          "title": "Month Cap Ceiling Usd",
+          "type": "number"
+        },
+        "month_cap_usd": {
+          "title": "Month Cap Usd",
+          "type": "number"
+        },
+        "month_spent_usd": {
+          "title": "Month Spent Usd",
+          "type": "number"
+        },
+        "warning": {
+          "title": "Warning",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "month_spent_usd",
+        "month_cap_usd",
+        "day_spent_usd",
+        "day_cap_usd",
+        "warning",
+        "exhausted"
+      ],
+      "title": "BudgetStatus",
+      "type": "object"
+    },
+    "Features": {
+      "additionalProperties": false,
+      "properties": {
+        "chat": {
+          "default": false,
+          "title": "Chat",
+          "type": "boolean"
+        },
+        "personality": {
+          "default": true,
+          "title": "Personality",
+          "type": "boolean"
+        },
+        "pvp": {
+          "default": true,
+          "title": "Pvp",
+          "type": "boolean"
+        }
+      },
+      "title": "Features",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "breaker": {
+      "title": "Breaker",
+      "type": "string"
+    },
+    "budget": {
+      "$ref": "#/$defs/BudgetStatus"
+    },
+    "chat_model": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Chat Model"
+    },
+    "enabled": {
+      "title": "Enabled",
+      "type": "boolean"
+    },
+    "fake_decisions": {
+      "title": "Fake Decisions",
+      "type": "boolean"
+    },
+    "features": {
+      "$ref": "#/$defs/Features"
+    },
+    "has_api_key": {
+      "title": "Has Api Key",
+      "type": "boolean"
+    },
+    "in_flight": {
+      "title": "In Flight",
+      "type": "integer"
+    },
+    "mode": {
+      "enum": [
+        "off",
+        "fake",
+        "live"
+      ],
+      "title": "Mode",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "templates": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Templates",
+      "type": "array"
+    },
+    "version": {
+      "title": "Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "version",
+    "mode",
+    "enabled",
+    "has_api_key",
+    "fake_decisions",
+    "chat_model",
+    "features",
+    "budget",
+    "breaker",
+    "in_flight",
+    "templates"
+  ],
+  "title": "StatusResponse",
+  "type": "object"
+}

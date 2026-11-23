@@ -1,0 +1,45 @@
+From 6057a48242495f978cbf61b16abe9a6fe68a2b54 Mon Sep 17 00:00:00 2001
+From: sardi-dev <134648583+sardi-dev@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 21:39:27 +0000
+Subject: [PATCH 09/25] Take the auction deposit before the sale is saved
+
+HandleAuctionSellItem saved the inventory and gold first and deducted the
+deposit afterwards, so the deposit was only persisted with the next
+periodic save and a crash in between kept the gold while the auction
+existed. Take the deposit before the transaction is built, in both the
+whole stack and the cloned stack path, and do it as 64-bit math instead
+of through an int32 cast.
+---
+ src/server/game/Handlers/AuctionHouseHandler.cpp | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/src/server/game/Handlers/AuctionHouseHandler.cpp b/src/server/game/Handlers/AuctionHouseHandler.cpp
+index be71ad2e2d..b238c25c61 100644
+--- a/src/server/game/Handlers/AuctionHouseHandler.cpp
++++ b/src/server/game/Handlers/AuctionHouseHandler.cpp
+@@ -392,6 +392,7 @@ void WorldSession::HandleAuctionSellItem(WorldPacket& recvData)
+         auctionHouse->AddAuction(AH);
+ 
+         _player->MoveItemFromInventory(item->GetBagSlot(), item->GetSlot(), true);
++        _player->ModifyMoney(-int64(deposit));
+ 
+         SQLTransaction trans = CharacterDatabase.BeginTransaction();
+         item->DeleteFromInventoryDB(trans);
+@@ -468,6 +469,8 @@ void WorldSession::HandleAuctionSellItem(WorldPacket& recvData)
+             }
+         }
+ 
++        _player->ModifyMoney(-int64(deposit));
++
+         SQLTransaction trans = CharacterDatabase.BeginTransaction();
+         newItem->SaveToDB(trans);
+         AH->SaveToDB(trans);
+@@ -478,8 +481,6 @@ void WorldSession::HandleAuctionSellItem(WorldPacket& recvData)
+ 
+         GetPlayer()->UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_CREATE_AUCTION, 1);
+     }
+-
+-    _player->ModifyMoney(-int32(deposit));
+ }
+ 
+ // this function is called when client bids or buys out auction

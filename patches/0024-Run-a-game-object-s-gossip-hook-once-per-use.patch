@@ -1,0 +1,45 @@
+From fe8c2ab7808606e22f647b2e83ec7dacdc511086 Mon Sep 17 00:00:00 2001
+From: sardi-dev <134648583+sardi-dev@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 16:49:37 +0000
+Subject: [PATCH 24/25] Run a game object's gossip hook once per use
+
+A click on a game object sends the use itself, which already runs the
+object AI's GossipHello, and a report of the use, whose handler ran
+GossipHello a second time. Scripted objects therefore acted twice per
+click: the Celestial Planetarium console in Ulduar summoned two Branns,
+and object SmartAI gossip events fired twice. The report now calls its
+own OnReportUse hook, which does nothing by default.
+
+Ported from TrinityCore 3.3.5.
+---
+ src/server/game/AI/CoreAI/GameObjectAI.h  | 3 +++
+ src/server/game/Handlers/SpellHandler.cpp | 2 +-
+ 2 files changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/src/server/game/AI/CoreAI/GameObjectAI.h b/src/server/game/AI/CoreAI/GameObjectAI.h
+index 8623e7213f..8d6b77a7df 100644
+--- a/src/server/game/AI/CoreAI/GameObjectAI.h
++++ b/src/server/game/AI/CoreAI/GameObjectAI.h
+@@ -34,6 +34,9 @@ public:
+     static int Permissible(GameObject const* go);
+ 
+     virtual bool GossipHello(Player* /*player*/) { return false; }
++
++    // Called when a player reports using a game object (sent with or after the use itself); GossipHello runs from the use.
++    virtual bool OnReportUse(Player* /*player*/) { return false; }
+     virtual bool GossipSelect(Player* /*player*/, uint32 /*sender*/, uint32 /*action*/) { return false; }
+     virtual bool GossipSelectCode(Player* /*player*/, uint32 /*sender*/, uint32 /*action*/, char const* /*code*/) { return false; }
+     virtual bool QuestAccept(Player* /*player*/, Quest const* /*quest*/) { return false; }
+diff --git a/src/server/game/Handlers/SpellHandler.cpp b/src/server/game/Handlers/SpellHandler.cpp
+index dcb77c0ef0..776c808cea 100644
+--- a/src/server/game/Handlers/SpellHandler.cpp
++++ b/src/server/game/Handlers/SpellHandler.cpp
+@@ -1497,7 +1497,7 @@ void WorldSession::HandleGameobjectReportUse(WorldPacket& recvPacket)
+     if (!go->IsWithinDistInMap(_player, INTERACTION_DISTANCE))
+         return;
+ 
+-    if (go->AI()->GossipHello(_player))
++    if (go->AI()->OnReportUse(_player))
+         return;
+ 
+     _player->UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_USE_GAMEOBJECT, go->GetEntry());

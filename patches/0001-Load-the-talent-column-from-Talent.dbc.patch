@@ -1,0 +1,39 @@
+From 6cfc39fe271f38a936aaff4199658bf534515c42 Mon Sep 17 00:00:00 2001
+From: sardi-dev <134648583+sardi-dev@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 13:36:39 +0000
+Subject: [PATCH 01/25] Load the talent column from Talent.dbc
+
+TalentEntry skipped field 3, the column of a talent in its row, so code
+that needs a talent's place in the talent grid could not get it. The
+field is now loaded as Col; nothing else changes.
+---
+ src/server/game/DataStores/DBCStructure.h | 2 +-
+ src/server/game/DataStores/DBCfmt.h       | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/server/game/DataStores/DBCStructure.h b/src/server/game/DataStores/DBCStructure.h
+index a86b67f550..21abef1f14 100644
+--- a/src/server/game/DataStores/DBCStructure.h
++++ b/src/server/game/DataStores/DBCStructure.h
+@@ -2730,7 +2730,7 @@ struct TalentEntry
+     uint32    TalentID;                                     // 0
+     //uint32    unk0;                                       // 1
+     uint32    Row;                                          // 2
+-    //uint32    Col;                                        // 3
++    uint32    Col;                                          // 3
+     uint32    SpellId;                                      // 4
+     //uint32    unk1;                                       // 5
+     //uint32    unk2;                                       // 6
+diff --git a/src/server/game/DataStores/DBCfmt.h b/src/server/game/DataStores/DBCfmt.h
+index 60702acbf6..7a08fe91c1 100644
+--- a/src/server/game/DataStores/DBCfmt.h
++++ b/src/server/game/DataStores/DBCfmt.h
+@@ -161,7 +161,7 @@ char const SpellRuneCostfmt[] = "niiiii";
+ char const SpellShapeshiftFormfmt[] = "nxxiixiiixxiiiiiiiiix";
+ 
+ char const SummonPropertiesfmt[] = "niiiii";
+-char const TalentEntryfmt[] = "nxixixxxiix";
++char const TalentEntryfmt[] = "nxiiixxxiix";
+ char const TaxiNodesEntryfmt[] = "difffsiixxxx";
+ char const TaxiPathEntryfmt[] = "niii";
+ char const TaxiPathNodeEntryfmt[] = "diiifffiiii";

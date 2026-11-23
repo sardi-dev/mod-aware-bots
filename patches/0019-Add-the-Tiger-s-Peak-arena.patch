@@ -1,0 +1,275 @@
+From 8bf12aab37db040f6f799f64cfd86b8831929cab Mon Sep 17 00:00:00 2001
+From: sardi-dev <134648583+sardi-dev@users.noreply.github.com>
+Date: Wed, 18 Nov 2026 23:24:54 +0000
+Subject: [PATCH 19/25] Add the Tiger's Peak arena
+
+The arena had a template row and a start location but no class, so no
+match could be created on it. Add the class, modelled on the Tol'viron
+arena: two gates that open when the match starts and two Shadow Sight
+buffs that appear a minute later. Players who fall below the map are
+returned to the middle of it. The arena counters are sent through the
+initial world states of its zone, and the arena joins the random arena
+selection with the weight of its template row.
+
+Based on Legends of Azeroth 5.4.8.
+---
+ .../game/Battlegrounds/BattlegroundMgr.cpp    |  10 ++
+ .../Battlegrounds/Zones/BattlegroundTTP.cpp   | 111 ++++++++++++++++++
+ .../Battlegrounds/Zones/BattlegroundTTP.h     |  57 +++++++++
+ src/server/game/Entities/Player/Player.cpp    |   5 +
+ 4 files changed, 183 insertions(+)
+ create mode 100644 src/server/game/Battlegrounds/Zones/BattlegroundTTP.cpp
+ create mode 100644 src/server/game/Battlegrounds/Zones/BattlegroundTTP.h
+
+diff --git a/src/server/game/Battlegrounds/BattlegroundMgr.cpp b/src/server/game/Battlegrounds/BattlegroundMgr.cpp
+index d6be1358c1..a1965b35b3 100644
+--- a/src/server/game/Battlegrounds/BattlegroundMgr.cpp
++++ b/src/server/game/Battlegrounds/BattlegroundMgr.cpp
+@@ -25,6 +25,7 @@
+ #include "BattlegroundSA.h"
+ #include "BattlegroundSM.h"
+ #include "BattlegroundTP.h"
++#include "BattlegroundTTP.h"
+ #include "BattlegroundTV.h"
+ #include "BattlegroundVOP.h"
+ #include "BattlegroundWS.h"
+@@ -538,6 +539,7 @@ void BattlegroundMgr::BuildPvpLogDataPacket(WorldPacket* data, Battleground* bg)
+             case BattlegroundTypeId::BATTLEGROUND_DS:
+             case BattlegroundTypeId::BATTLEGROUND_RV:
+             case BattlegroundTypeId::BATTLEGROUND_TV:
++            case BattlegroundTypeId::BATTLEGROUND_TTP:
+                 data->WriteBits(0, 22);
+                 break;
+             default:
+@@ -879,6 +881,9 @@ Battleground* BattlegroundMgr::CreateNewBattleground(BattlegroundTypeId original
+         case BattlegroundTypeId::BATTLEGROUND_TV:
+             bg = new BattlegroundTV(*(BattlegroundTV*)bg_template);
+             break;
++        case BattlegroundTypeId::BATTLEGROUND_TTP:
++            bg = new BattlegroundTTP(*(BattlegroundTTP*)bg_template);
++            break;
+         case BattlegroundTypeId::BATTLEGROUND_RB:
+         case BattlegroundTypeId::BATTLEGROUND_AA:
+             bg = new Battleground(*bg_template);
+@@ -976,6 +981,9 @@ bool BattlegroundMgr::CreateBattleground(CreateBattlegroundData& data)
+         case BattlegroundTypeId::BATTLEGROUND_TV:
+             bg = new BattlegroundTV;
+             break;
++        case BattlegroundTypeId::BATTLEGROUND_TTP:
++            bg = new BattlegroundTTP;
++            break;
+         case BattlegroundTypeId::BATTLEGROUND_BFG:
+             bg = new BattlegroundBFG;
+             break;
+@@ -1239,6 +1247,7 @@ bool BattlegroundMgr::IsArenaType(BattlegroundTypeId bgTypeId)
+         || bgTypeId == BattlegroundTypeId::BATTLEGROUND_DS
+         || bgTypeId == BattlegroundTypeId::BATTLEGROUND_RV
+         || bgTypeId == BattlegroundTypeId::BATTLEGROUND_TV
++        || bgTypeId == BattlegroundTypeId::BATTLEGROUND_TTP
+         || bgTypeId == BattlegroundTypeId::BATTLEGROUND_RL;
+ }
+ 
+@@ -1277,6 +1286,7 @@ BattlegroundQueueTypeId BattlegroundMgr::BGQueueTypeId(BattlegroundTypeId bgType
+         case BattlegroundTypeId::BATTLEGROUND_RL:
+         case BattlegroundTypeId::BATTLEGROUND_RV:
+         case BattlegroundTypeId::BATTLEGROUND_TV:
++        case BattlegroundTypeId::BATTLEGROUND_TTP:
+             switch (arenaType)
+             {
+                 case ARENA_TYPE_2v2:
+diff --git a/src/server/game/Battlegrounds/Zones/BattlegroundTTP.cpp b/src/server/game/Battlegrounds/Zones/BattlegroundTTP.cpp
+new file mode 100644
+index 0000000000..d99a0d2c2e
+--- /dev/null
++++ b/src/server/game/Battlegrounds/Zones/BattlegroundTTP.cpp
+@@ -0,0 +1,111 @@
++/*
++* This file is part of the Pandaria 5.4.8 Project. See THANKS file for Copyright information
++*
++* This program is free software; you can redistribute it and/or modify it
++* under the terms of the GNU General Public License as published by the
++* Free Software Foundation; either version 2 of the License, or (at your
++* option) any later version.
++*
++* This program is distributed in the hope that it will be useful, but WITHOUT
++* ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++* FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
++* more details.
++*
++* You should have received a copy of the GNU General Public License along
++* with this program. If not, see <http://www.gnu.org/licenses/>.
++*/
++
++#include "BattlegroundTTP.h"
++#include "Language.h"
++#include "Object.h"
++#include "ObjectMgr.h"
++#include "Player.h"
++#include "WorldPacket.h"
++
++BattlegroundTTP::BattlegroundTTP()
++{
++    BgObjects.resize(BG_TTP_OBJECT_MAX);
++
++    StartDelayTimes[BG_STARTING_EVENT_FIRST] = BG_START_DELAY_1M;
++    StartDelayTimes[BG_STARTING_EVENT_SECOND] = BG_START_DELAY_30S;
++    StartDelayTimes[BG_STARTING_EVENT_THIRD] = BG_START_DELAY_15S;
++    StartDelayTimes[BG_STARTING_EVENT_FOURTH] = BG_START_DELAY_NONE;
++    //we must set messageIds
++    StartMessageIds[BG_STARTING_EVENT_FIRST] = LANG_ARENA_ONE_MINUTE;
++    StartMessageIds[BG_STARTING_EVENT_SECOND] = LANG_ARENA_THIRTY_SECONDS;
++    StartMessageIds[BG_STARTING_EVENT_THIRD] = LANG_ARENA_FIFTEEN_SECONDS;
++    StartMessageIds[BG_STARTING_EVENT_FOURTH] = LANG_ARENA_HAS_BEGUN;
++}
++
++void BattlegroundTTP::StartingEventCloseDoors()
++{
++    for (uint32 i = BG_TTP_OBJECT_DOOR_1; i <= BG_TTP_OBJECT_DOOR_2; ++i)
++        SpawnBGObject(i, RESPAWN_IMMEDIATELY);
++
++    for (uint32 i = BG_TTP_OBJECT_BUFF_1; i <= BG_TTP_OBJECT_BUFF_2; ++i)
++        SpawnBGObject(i, RESPAWN_ONE_DAY);
++}
++
++void BattlegroundTTP::StartingEventOpenDoors()
++{
++    for (uint32 i = BG_TTP_OBJECT_DOOR_1; i <= BG_TTP_OBJECT_DOOR_2; ++i)
++        DoorOpen(i);
++
++    for (uint32 i = BG_TTP_OBJECT_BUFF_1; i <= BG_TTP_OBJECT_BUFF_2; ++i)
++        SpawnBGObject(i, 60);
++}
++
++void BattlegroundTTP::AddPlayer(Player* player)
++{
++    Battleground::AddPlayer(player);
++    PlayerScores[player->GetGUID()] = new BattlegroundScore;
++    UpdateArenaWorldState();
++}
++
++void BattlegroundTTP::RemovePlayer(Player* /*player*/, uint64 /*guid*/, uint32 /*team*/)
++{
++    if (GetStatus() == STATUS_WAIT_LEAVE)
++        return;
++
++    UpdateArenaWorldState();
++    CheckArenaWinConditions();
++}
++
++void BattlegroundTTP::HandleKillPlayer(Player* player, Player* killer)
++{
++    if (GetStatus() != STATUS_IN_PROGRESS)
++        return;
++
++    Battleground::HandleKillPlayer(player, killer);
++
++    UpdateArenaWorldState();
++    CheckArenaWinConditions();
++}
++
++bool BattlegroundTTP::HandlePlayerUnderMap(Player* player)
++{
++    player->TeleportTo(GetMapId(), 567.313843f, 632.106384f, 380.703339f, player->GetOrientation());
++    return true;
++}
++
++void BattlegroundTTP::FillInitialWorldStates(WorldStateBuilder& builder)
++{
++    builder.AppendState(0xE1A, 1);
++    UpdateArenaWorldState();
++}
++
++bool BattlegroundTTP::SetupBattleground()
++{
++    // gates
++    if (!AddObject(BG_TTP_OBJECT_DOOR_1, BG_TTP_OBJECT_TYPE_DOOR_1, 502.414f, 633.099f, 380.706f, 0.0308292f, 0.0f, 0.0f, 0.015414f, 0.999881f, RESPAWN_IMMEDIATELY)
++        || !AddObject(BG_TTP_OBJECT_DOOR_2, BG_TTP_OBJECT_TYPE_DOOR_2, 632.891f, 633.059f, 380.705f, 3.12778f, 0.0f, 0.0f, 0.999976f, 0.0069045f, RESPAWN_IMMEDIATELY)
++        // buffs
++        || !AddObject(BG_TTP_OBJECT_BUFF_1, BG_TTP_OBJECT_TYPE_BUFF_1, 566.788f, 602.743f, 383.68f, 1.5724f, 0.0f, 0.0f, 0.707673f, 0.70654f, 120)
++        || !AddObject(BG_TTP_OBJECT_BUFF_2, BG_TTP_OBJECT_TYPE_BUFF_2, 566.661f, 664.311f, 383.681f, 4.66374f, 0.0f, 0.0f, 0.724097f, -0.689698f, 120))
++    {
++        SF_LOG_ERROR("sql.sql", "BattlegroundTTP: Failed to spawn some object!");
++        return false;
++    }
++
++    return true;
++}
+diff --git a/src/server/game/Battlegrounds/Zones/BattlegroundTTP.h b/src/server/game/Battlegrounds/Zones/BattlegroundTTP.h
+new file mode 100644
+index 0000000000..1274fdc95c
+--- /dev/null
++++ b/src/server/game/Battlegrounds/Zones/BattlegroundTTP.h
+@@ -0,0 +1,57 @@
++/*
++* This file is part of the Pandaria 5.4.8 Project. See THANKS file for Copyright information
++*
++* This program is free software; you can redistribute it and/or modify it
++* under the terms of the GNU General Public License as published by the
++* Free Software Foundation; either version 2 of the License, or (at your
++* option) any later version.
++*
++* This program is distributed in the hope that it will be useful, but WITHOUT
++* ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++* FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
++* more details.
++*
++* You should have received a copy of the GNU General Public License along
++* with this program. If not, see <http://www.gnu.org/licenses/>.
++*/
++
++#ifndef SF_BATTLEGROUNDTTP_H
++#define SF_BATTLEGROUNDTTP_H
++
++#include "Battleground.h"
++
++enum BattlegroundTTPObjectTypes
++{
++    BG_TTP_OBJECT_DOOR_1 = 0,
++    BG_TTP_OBJECT_DOOR_2 = 1,
++    BG_TTP_OBJECT_BUFF_1 = 2,
++    BG_TTP_OBJECT_BUFF_2 = 3,
++    BG_TTP_OBJECT_MAX = 4
++};
++
++enum BattlegroundTTPObjects
++{
++    BG_TTP_OBJECT_TYPE_DOOR_1 = 212921,
++    BG_TTP_OBJECT_TYPE_DOOR_2 = 212921,
++    BG_TTP_OBJECT_TYPE_BUFF_1 = 184663,
++    BG_TTP_OBJECT_TYPE_BUFF_2 = 184664
++};
++
++class BattlegroundTTP : public Battleground
++{
++public:
++    BattlegroundTTP();
++    ~BattlegroundTTP() { }
++
++    /* inherited from BattlegroundClass */
++    void AddPlayer(Player* player) OVERRIDE;
++    void StartingEventCloseDoors() OVERRIDE;
++    void StartingEventOpenDoors() OVERRIDE;
++
++    void RemovePlayer(Player* player, uint64 guid, uint32 team) OVERRIDE;
++    bool SetupBattleground() OVERRIDE;
++    void FillInitialWorldStates(WorldStateBuilder& builder) OVERRIDE;
++    void HandleKillPlayer(Player* player, Player* killer) OVERRIDE;
++    bool HandlePlayerUnderMap(Player* player) OVERRIDE;
++};
++#endif
+diff --git a/src/server/game/Entities/Player/Player.cpp b/src/server/game/Entities/Player/Player.cpp
+index cbb0727d27..1ffcdc01e9 100644
+--- a/src/server/game/Entities/Player/Player.cpp
++++ b/src/server/game/Entities/Player/Player.cpp
+@@ -10594,6 +10594,11 @@ void Player::SendInitWorldStates(uint32 zoneid, uint32 areaid)
+             if (bg && bg->GetTypeID(true) == BattlegroundTypeId::BATTLEGROUND_DG)
+                 bg->FillInitialWorldStates(builder);
+             break;
++            // The Tiger's Peak
++        case 6732:
++            if (bg && bg->GetTypeID(true) == BattlegroundTypeId::BATTLEGROUND_TTP)
++                bg->FillInitialWorldStates(builder);
++            break;
+             // Wintergrasp
+         case 4197:
+             if (bf && bf->GetTypeId() == BATTLEFIELD_WG)

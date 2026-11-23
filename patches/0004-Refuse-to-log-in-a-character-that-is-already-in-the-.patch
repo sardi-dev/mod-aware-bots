@@ -1,0 +1,35 @@
+From 5fa63e3f63a1deba9694b594d0b324e0935a8cb7 Mon Sep 17 00:00:00 2001
+From: sardi-dev <134648583+sardi-dev@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 23:54:46 +0000
+Subject: [PATCH 04/25] Refuse to log in a character that is already in the
+ world
+
+A session could load a character that another session still has in the
+world, such as one a module logs in without a client, which puts the
+same character in the world twice. The login is now refused with
+CHAR_LOGIN_DUPLICATE_CHARACTER.
+---
+ src/server/game/Handlers/CharacterHandler.cpp | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/src/server/game/Handlers/CharacterHandler.cpp b/src/server/game/Handlers/CharacterHandler.cpp
+index 6ef77d36b1..b806f60c3c 100644
+--- a/src/server/game/Handlers/CharacterHandler.cpp
++++ b/src/server/game/Handlers/CharacterHandler.cpp
+@@ -1433,6 +1433,16 @@ void WorldSession::HandlePlayerLoginOpcode(WorldPacket& recvData)
+         return;
+     }
+ 
++    // The character may still be in the world from another session (for example one a module logs in without a
++    // client); loading it a second time would put the same character in the world twice.
++    if (ObjectAccessor::FindPlayer(playerGuid))
++    {
++        SF_LOG_ERROR("network", "Account (%u) tried to log in character (%u), which is already in the world.",
++            GetAccountId(), GUID_LOPART(playerGuid));
++        SendCharacterLoginFailed(ResponseCodes::CHAR_LOGIN_DUPLICATE_CHARACTER);
++        return;
++    }
++
+     m_playerLoading = true;
+     m_pendingPlayerLoginGuid = playerGuid;
+ 

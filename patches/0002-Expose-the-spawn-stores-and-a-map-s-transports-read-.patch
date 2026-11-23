@@ -1,0 +1,44 @@
+From 550e4b2bfbca15ec94daa2c3ab355c702158af9b Mon Sep 17 00:00:00 2001
+From: sardi-dev <134648583+sardi-dev@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 14:39:34 +0000
+Subject: [PATCH 02/25] Expose the spawn stores and a map's transports
+ read-only
+
+Modules that search the world, such as player bots looking for a
+quest giver's spawn or the transport under a position, had no way to
+list all creature and game object spawns or the transports on a map.
+ObjectMgr::GetAllCreatureData and GetAllGameObjectData and
+Map::GetTransports return the existing containers as const references.
+---
+ src/server/game/Globals/ObjectMgr.h | 4 ++++
+ src/server/game/Maps/Map.h          | 2 ++
+ 2 files changed, 6 insertions(+)
+
+diff --git a/src/server/game/Globals/ObjectMgr.h b/src/server/game/Globals/ObjectMgr.h
+index 910c8c177b..1acbaa13d7 100644
+--- a/src/server/game/Globals/ObjectMgr.h
++++ b/src/server/game/Globals/ObjectMgr.h
+@@ -1184,6 +1184,10 @@ public:
+         return NULL;
+     }
+ 
++    // Every creature and game object spawn, read-only (for modules that need to search all spawns).
++    CreatureDataContainer const& GetAllCreatureData() const { return _creatureDataStore; }
++    GameObjectDataContainer const& GetAllGameObjectData() const { return _gameObjectDataStore; }
++
+     CreatureData const* GetCreatureData(uint32 guid) const
+     {
+         CreatureDataContainer::const_iterator itr = _creatureDataStore.find(guid);
+diff --git a/src/server/game/Maps/Map.h b/src/server/game/Maps/Map.h
+index 1c4cf6caef..21f952561b 100644
+--- a/src/server/game/Maps/Map.h
++++ b/src/server/game/Maps/Map.h
+@@ -438,6 +438,8 @@ public:
+     Creature* GetCreature(uint64 guid);
+     GameObject* GetGameObject(uint64 guid);
+     Transport* GetTransport(uint64 guid);
++    // The transports currently on this map, read-only.
++    std::set<Transport*> const& GetTransports() const { return _transports; }
+     DynamicObject* GetDynamicObject(uint64 guid);
+ 
+     MapInstanced* ToMapInstanced() { if (Instanceable())  return reinterpret_cast<MapInstanced*>(this); else return NULL; }

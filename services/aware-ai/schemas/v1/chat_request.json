@@ -1,0 +1,225 @@
+{
+  "$defs": {
+    "ChatCharacter": {
+      "additionalProperties": false,
+      "properties": {
+        "class_name": {
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Class Name",
+          "type": "string"
+        },
+        "level": {
+          "maximum": 255,
+          "minimum": 1,
+          "title": "Level",
+          "type": "integer"
+        },
+        "name": {
+          "maxLength": 24,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "race": {
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "title": "Race",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "class_name",
+        "race",
+        "level"
+      ],
+      "title": "ChatCharacter",
+      "type": "object"
+    },
+    "ChatPersonality": {
+      "additionalProperties": false,
+      "properties": {
+        "aggression": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Aggression",
+          "type": "integer"
+        },
+        "chattiness": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Chattiness",
+          "type": "integer"
+        },
+        "honor": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Honor",
+          "type": "integer"
+        },
+        "sociability": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Sociability",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "aggression",
+        "sociability",
+        "chattiness",
+        "honor"
+      ],
+      "title": "ChatPersonality",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "bot": {
+      "$ref": "#/$defs/ChatCharacter"
+    },
+    "bot_guid": {
+      "minimum": 0,
+      "title": "Bot Guid",
+      "type": "integer"
+    },
+    "channel": {
+      "enum": [
+        "whisper",
+        "say",
+        "party",
+        "raid",
+        "guild",
+        "battleground"
+      ],
+      "title": "Channel",
+      "type": "string"
+    },
+    "conversation": {
+      "default": false,
+      "title": "Conversation",
+      "type": "boolean"
+    },
+    "deadline_ms": {
+      "maximum": 20000,
+      "minimum": 500,
+      "title": "Deadline Ms",
+      "type": "integer"
+    },
+    "deny_being_bot": {
+      "default": false,
+      "title": "Deny Being Bot",
+      "type": "boolean"
+    },
+    "guild_human_message_age_s": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Guild Human Message Age S"
+    },
+    "kind": {
+      "enum": [
+        "duel_challenge",
+        "duel_win",
+        "duel_loss",
+        "bg_win",
+        "bg_loss",
+        "bg_capture",
+        "whisper_reply",
+        "nearby_reply",
+        "party_moment",
+        "guild_reply",
+        "opener",
+        "friend_whisper"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "liking": {
+      "anyOf": [
+        {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Liking"
+    },
+    "message": {
+      "maxLength": 800,
+      "minLength": 1,
+      "title": "Message",
+      "type": "string"
+    },
+    "personality": {
+      "$ref": "#/$defs/ChatPersonality"
+    },
+    "player": {
+      "$ref": "#/$defs/ChatCharacter"
+    },
+    "player_guid": {
+      "minimum": 0,
+      "title": "Player Guid",
+      "type": "integer"
+    },
+    "relation": {
+      "anyOf": [
+        {
+          "enum": [
+            "cold",
+            "stranger",
+            "friendly",
+            "close"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Relation"
+    },
+    "same_faction": {
+      "title": "Same Faction",
+      "type": "boolean"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "zone": {
+      "maxLength": 64,
+      "title": "Zone",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "bot_guid",
+    "player_guid",
+    "bot",
+    "player",
+    "personality",
+    "same_faction",
+    "zone",
+    "kind",
+    "channel",
+    "message",
+    "deadline_ms"
+  ],
+  "title": "ChatRequest",
+  "type": "object"
+}

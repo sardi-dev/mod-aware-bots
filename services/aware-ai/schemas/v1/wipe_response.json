@@ -1,0 +1,38 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "chat_turns": {
+      "default": 0,
+      "title": "Chat Turns",
+      "type": "integer"
+    },
+    "log_lines": {
+      "default": 0,
+      "title": "Log Lines",
+      "type": "integer"
+    },
+    "memory_events": {
+      "default": 0,
+      "title": "Memory Events",
+      "type": "integer"
+    },
+    "pair_notes": {
+      "default": 0,
+      "title": "Pair Notes",
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "social_events": {
+      "default": 0,
+      "title": "Social Events",
+      "type": "integer"
+    }
+  },
+  "title": "WipeResponse",
+  "type": "object"
+}

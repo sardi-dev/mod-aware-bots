@@ -1,0 +1,15 @@
+# Build output and editor files
+build/
+*.o
+.vscode/
+.idea/
+__pycache__/
+# Local test settings (passwords stay on this machine)
+*.local.json
+.env
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.log
+results/

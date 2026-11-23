@@ -1,0 +1,22 @@
+# Asked during a fight with the enemy player when the bot's health drops below 50%, and again below 25%.
+# Bump `version` whenever the wording or option set changes, so logs and caches tell versions apart.
+name = "pvp_reassess"
+version = 1
+feature = "pvp"
+cache_ttl_s = 5
+
+intro = """
+Fantasy MMO (client 5.4.8), PvP realm. A bot player is in a fight with an enemy-faction player and has just taken a
+lot of damage. Judge like a skilled player with the bot's personality (0-100 scales). Distances are in yards;
+fight_s is how long the fight has lasted; grudge is how much the bot wants revenge.
+"""
+
+instructions = "Should this bot keep fighting or try to get away now?"
+
+[[options]]
+name = "continue_fight"
+criteria = "Keep fighting: the enemy is also hurt or weaker, help is close, or escaping would fail anyway."
+
+[[options]]
+name = "disengage"
+criteria = "Break off and run now: the bot is losing and has a real chance to escape or reach help."

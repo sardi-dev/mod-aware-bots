@@ -1,0 +1,32 @@
+From deac4d5e631264bfa51c2293fa191f00196eb16c Mon Sep 17 00:00:00 2001
+From: sardi-dev <134648583+sardi-dev@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 21:49:44 +0000
+Subject: [PATCH 12/25] Only take a mail item that belongs to that mail
+
+Taking an item from a mail looked the item up among all of the player's
+mails, so a forged request could name an item of another mail and take it
+without paying that mail's cash on delivery. Check that the item is in the
+mail first.
+---
+ src/server/game/Entities/Player/PlayerMail.cpp | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/src/server/game/Entities/Player/PlayerMail.cpp b/src/server/game/Entities/Player/PlayerMail.cpp
+index 974f5b8255..73a4d8b2b1 100644
+--- a/src/server/game/Entities/Player/PlayerMail.cpp
++++ b/src/server/game/Entities/Player/PlayerMail.cpp
+@@ -62,7 +62,13 @@ MailResponseResult Player::TakeMailItem(uint32 mailId, uint32 itemGuidLow, uint3
+     if (!HasEnoughMoney(uint64(m->COD)))
+         return MAIL_ERR_NOT_ENOUGH_MONEY;
+ 
+-    Item* it = GetMItem(itemGuidLow);
++    // GetMItem searches every mail of the player, so a forged packet could name an item of another mail
++    bool inMail = false;
++    for (MailItemInfo const& info : m->items)
++        if (info.item_guid == itemGuidLow)
++            inMail = true;
++
++    Item* it = inMail ? GetMItem(itemGuidLow) : NULL;
+     if (!it)
+         return MAIL_ERR_INTERNAL_ERROR;
+ 

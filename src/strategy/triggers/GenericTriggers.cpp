@@ -1,0 +1,962 @@
+/*
+* This file is part of the Legends of Azeroth Pandaria Project. See THANKS file for Copyright information
+*
+* This program is free software; you can redistribute it and/or modify it
+* under the terms of the GNU General Public License as published by the
+* Free Software Foundation; either version 2 of the License, or (at your
+* option) any later version.
+*
+* This program is distributed in the hope that it will be useful, but WITHOUT
+* ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+* FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+* more details.
+*
+* You should have received a copy of the GNU General Public License along
+* with this program. If not, see <http://www.gnu.org/licenses/>.
+*/
+#include "GenericTriggers.h"
+#include "OneVsOne.h"
+#include "AreaControlPolicy.h"
+#include "BotSkill.h"
+#include "CcDutyTargetValue.h"
+
+#include <string>
+
+#include "DatabaseEnvFwd.h"
+#include "BattlegroundWS.h"
+#include "CreatureAI.h"
+#include "GameTime.h"
+#include "LastSpellCastValue.h"
+#include "LootObjectStack.h"
+#include "BotGuid.h"
+#include "Config.h"
+#include "Group.h"
+#include "Map.h"
+#include "PlayerbotAIConfig.h"
+#include "PlayerbotSpec.h"
+#include "Playerbots.h"
+#include "PositionValue.h"
+#include "PvpInterrupt.h"
+#include "ServerFacade.h"
+#include "SharedDefines.h"
+#include "TemporarySummon.h"
+#include "ThreatManager.h"
+#include "StaleCombat.h"
+#include "Timer.h"
+
+bool LowManaTrigger::IsActive()
+{
+    return AI_VALUE2(bool, "has mana", "self target") &&
+        AI_VALUE2(uint8, "mana", "self target") < sPlayerbotAIConfig->lowMana;
+}
+
+// A bot drinks in a dungeon only this close to its leader, in yards.
+static constexpr float DUNGEON_DRINK_LEADER_RANGE = 25.0f;
+
+bool DungeonDrinkTrigger::IsActive()
+{
+    // Read once on first use, like the other local settings (MarkTriggers.cpp).
+    static uint32 const threshold = uint32(sConfigMgr->GetIntDefault("AiPlayerbot.DungeonDrinkMana", 50));
+    if (!threshold || bot->IsInCombat() || !bot->IsAlive() || !bot->GetMap() || !bot->GetMap()->IsDungeon())
+        return false;
+
+    Group* group = bot->GetGroup();
+    if (!group || !AI_VALUE2(bool, "has mana", "self target") ||
+        AI_VALUE2(uint8, "mana", "self target") >= threshold)
+        return false;
+
+    if (!PlayerBotSpec::IsHeal(bot) && !PlayerBotSpec::IsCaster(bot))
+        return false;
+
+    // A bot the leader has left behind catches up first: it would drink again and again and never arrive.
+    Player* master = botAI->GetMaster();
+    if (master && master != bot && master->FindMap() == bot->FindMap() &&
+        !bot->IsWithinDistInMap(master, DUNGEON_DRINK_LEADER_RANGE))
+        return false;
+
+    // Never sit down while the group fights: the bot's own combat flag can lag a pull by a moment.
+    for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+    {
+        Player* member = ref->GetSource();
+        // BT-172: a combat flag with nothing attacking the member is not a fight (StaleCombat.h); it kept the casters of
+        // the Deadmines run of 2026-11-13 standing at 8 to 23 percent mana for minutes.
+        if (member && member != bot && member->FindMap() == bot->FindMap() && member->IsInCombat() &&
+            !StaleCombat::IsStale(member))
+            return false;
+    }
+
+    // BT-172: a caster with no drink in its bags cannot sit down, whatever the trigger says; the Deadmines warlock of
+    // 2026-11-13 carried only potions and bandages and recovered about 0.4 percent a second, so it held the group's
+    // pull at every mark. Say so once a minute (the tank's mana hold is capped, MarkPullPolicy.h).
+    if (AI_VALUE2(std::vector<Item*>, "inventory items", "drink").empty())
+    {
+        constexpr time_t NO_DRINK_LOG_SECONDS = 60;
+        time_t const now = time(nullptr);
+        if (!noDrinkLoggedAt || now - noDrinkLoggedAt >= NO_DRINK_LOG_SECONDS)
+        {
+            noDrinkLoggedAt = now;
+            SF_LOG_INFO("playerbots", "[DRINK] %s is at %u percent mana with no drink in its bags", bot->GetName().c_str(),
+                        unsigned(AI_VALUE2(uint8, "mana", "self target")));
+        }
+        return false;
+    }
+    return true;
+}
+
+bool MediumManaTrigger::IsActive()
+{
+    return AI_VALUE2(bool, "has mana", "self target") &&
+        AI_VALUE2(uint8, "mana", "self target") < sPlayerbotAIConfig->mediumMana;
+}
+
+bool NoPetTrigger::IsActive()
+{
+    return (!bot->GetMinionGUID()) && (!AI_VALUE(Unit*, "pet target")) && (!bot->GetGuardianPet()) &&
+        (!bot->GetFirstControlled()) && (!AI_VALUE2(bool, "mounted", "self target"));
+}
+
+bool HasPetTrigger::IsActive()
+{
+    return (AI_VALUE(Unit*, "pet target")) && !AI_VALUE2(bool, "mounted", "self target");
+}
+
+bool PetAttackTrigger::IsActive()
+{
+    Guardian* pet = bot->GetGuardianPet();
+    if (!pet)
+    {
+        return false;
+    }
+    Unit* target = AI_VALUE(Unit*, "current target");
+    if (!target)
+    {
+        return false;
+    }
+    if (pet->GetVictim() == target && pet->GetCharmInfo()->IsCommandAttack())
+    {
+        return false;
+    }
+    if (bot->GetMap()->IsDungeon() && bot->GetGroup() && !target->IsInCombat())
+    {
+        return false;
+    }
+    return true;
+}
+
+bool HighManaTrigger::IsActive()
+{
+    return AI_VALUE2(bool, "has mana", "self target") && AI_VALUE2(uint8, "mana", "self target") < sPlayerbotAIConfig->highMana;
+}
+
+bool AlmostFullManaTrigger::IsActive()
+{
+    return AI_VALUE2(bool, "has mana", "self target") && AI_VALUE2(uint8, "mana", "self target") > 85;
+}
+
+bool EnoughManaTrigger::IsActive()
+{
+    return AI_VALUE2(bool, "has mana", "self target") && AI_VALUE2(uint8, "mana", "self target") > sPlayerbotAIConfig->highMana;
+}
+
+// Ported from AC mod-playerbots GenericTriggers.cpp:94-106 (#149).
+bool ComboPointsAvailableTrigger::IsActive() { return AI_VALUE2(uint8, "combo", "current target") >= amount; }
+
+bool ComboPointsNotFullTrigger::IsActive() { return AI_VALUE2(uint8, "combo", "current target") < amount; }
+
+bool TargetWithComboPointsLowerHealTrigger::IsActive()
+{
+    Unit* target = AI_VALUE(Unit*, "current target");
+    if (!target || !target->IsAlive() || !target->IsInWorld())
+        return false;
+
+    return ComboPointsAvailableTrigger::IsActive() &&
+           (target->GetHealth() / AI_VALUE(float, "estimated group dps")) <= lifeTime;
+}
+
+bool RageAvailable::IsActive() { return AI_VALUE2(uint8, "rage", "self target") >= amount; }
+
+bool EnergyAvailable::IsActive() { return AI_VALUE2(uint8, "energy", "self target") >= amount; }
+
+bool LoseAggroTrigger::IsActive()
+{
+    Unit* target = AI_VALUE(Unit*, "current target");
+    if (target && (target->GetTypeId() == TypeID::TYPEID_PLAYER))
+        return false;  // players have no threat: taunts only waste the cooldown
+    return !AI_VALUE2(bool, "has aggro", "current target");
+}
+
+bool HasAggroTrigger::IsActive() { return AI_VALUE2(bool, "has aggro", "current target"); }
+
+bool PanicTrigger::IsActive()
+{
+    return AI_VALUE2(uint8, "health", "self target") < sPlayerbotAIConfig->criticalHealth &&
+        (!AI_VALUE2(bool, "has mana", "self target") ||
+            AI_VALUE2(uint8, "mana", "self target") < sPlayerbotAIConfig->lowMana);
+}
+
+bool OutNumberedTrigger::IsActive()
+{
+    if (bot->GetMap() && (bot->GetMap()->IsDungeon() || bot->GetMap()->IsRaid()))
+        return false;
+
+    if (bot->GetGroup() && bot->GetGroup()->isRaidGroup())
+        return false;
+
+    int32 botLevel = bot->getLevel();
+    uint32 friendPower = 200;
+    uint32 foePower = 0;
+    for (auto& attacker : botAI->GetAiObjectContext()->GetValue<GuidVector>("attackers")->Get())
+    {
+        Creature* creature = botAI->GetCreature(attacker);
+        if (!creature)
+            continue;
+
+        int32 dLevel = creature->getLevel() - botLevel;
+        if (dLevel > -10)
+            foePower = std::max(100 + 10 * dLevel, dLevel * 200);
+    }
+
+    if (!foePower)
+        return false;
+
+    for (auto& helper : botAI->GetAiObjectContext()->GetValue<GuidVector>("nearest friendly players")->Get())
+    {
+        Unit* player = botAI->GetUnit(helper);
+        if (!player || player == bot)
+            continue;
+
+        int32 dLevel = player->getLevel() - botLevel;
+
+        if (dLevel > -10 && bot->GetDistance(player) < 10.0f)
+            friendPower += std::max(200 + 20 * dLevel, dLevel * 200);
+    }
+
+    return friendPower < foePower;
+}
+
+bool BuffTrigger::IsActive()
+{
+    Unit* target = GetTarget();
+    if (!target)
+        return false;
+    if (!SpellTrigger::IsActive())
+        return false;
+    Aura* aura = botAI->GetAura(spell, target, checkIsOwner, checkDuration);
+    // #628 (AC GenericTriggers.cpp:165-166 + GenericBuffUtils.cpp:36-43 BuffBelowRefreshTarget): with no
+    // force-rebuff pass pending this is exactly the old rule (missing, or below beforeDuration).
+    if (!aura)
+        return true;
+    return botAI->forceRebuff.BuffBelowRefreshTarget(aura->GetDuration(), aura->GetMaxDuration(), beforeDuration);
+}
+
+Value<Unit*>* BuffOnPartyTrigger::GetTargetValue()
+{
+    return context->GetValue<Unit*>("party member without aura", spell);
+}
+
+bool ProtectPartyMemberTrigger::IsActive() { return AI_VALUE(Unit*, "party member to protect"); }
+
+Value<Unit*>* DebuffOnAttackerTrigger::GetTargetValue()
+{
+    return context->GetValue<Unit*>("attacker without aura", spell);
+}
+
+Value<Unit*>* DebuffOnMeleeAttackerTrigger::GetTargetValue()
+{
+    return context->GetValue<Unit*>("melee attacker without aura", spell);
+}
+
+bool DuelOpponentUntargetedTrigger::IsActive()
+{
+    if (!bot->duel || !bot->duel->opponent || bot->duel->startTime == 0)
+        return false;
+
+    return bot->duel->opponent->IsAlive() && !AI_VALUE(Unit*, "current target");
+}
+
+bool NoAttackersTrigger::IsActive()
+{
+    return !AI_VALUE(Unit*, "current target") && AI_VALUE(uint8, "my attacker count") > 0;
+}
+
+bool InvalidTargetTrigger::IsActive() { return AI_VALUE2(bool, "invalid target", "current target"); }
+
+bool NoTargetTrigger::IsActive() { return !AI_VALUE(Unit*, "current target"); }
+
+bool MyAttackerCountTrigger::IsActive()
+{
+    return AI_VALUE2(bool, "combat", "self target") && AI_VALUE(uint8, "my attacker count") >= amount;
+}
+
+bool LowTankThreatTrigger::IsActive()
+{
+    Unit* current_target = AI_VALUE(Unit*, "current target");
+    if (!current_target || (current_target->GetTypeId() == TypeID::TYPEID_PLAYER))
+        return false;  // players have no threat: Tricks of the Trade / Misdirection would be wasted
+
+    Unit* mt = AI_VALUE(Unit*, "main tank");
+    if (!mt)
+        return false;
+
+    ThreatManager& mgr = current_target->getThreatManager();
+    float threat = mgr.getThreat(bot);
+    float tankThreat = mgr.getThreat(mt);
+    return tankThreat == 0.0f || threat > tankThreat * 0.5f;
+}
+
+bool AoeTrigger::IsActive()
+{
+    Unit* current_target = AI_VALUE(Unit*, "current target");
+    if (!current_target)
+    {
+        return false;
+    }
+    GuidVector attackers = context->GetValue<GuidVector>("attackers")->Get();
+    AreaControlPolicy::Count count;
+    for (BotGuid const guid : attackers)
+    {
+        Unit* unit = botAI->GetUnit(guid);
+        if (unit)
+            count.Add(unit->IsAlive(), unit->GetDistance(current_target), range,
+                      unit->HasBreakableByDamageCrowdControlAura());
+    }
+
+    // BT-165: controlled marked mobs need not appear in the attackers list.
+    // Inspect the group marks as well, without scanning the map.
+    if (Group* group = bot->GetGroup())
+        for (uint8 icon = 0; icon < AreaControlPolicy::RaidIconCount; ++icon)
+            if (uint64 guid = group->GetTargetIcon(icon))
+                if (Unit* unit = botAI->GetUnit(guid))
+                    if (unit->IsAlive() && unit->GetDistance(current_target) <= range &&
+                        unit->HasBreakableByDamageCrowdControlAura())
+                        return false;
+
+    return count.CanCast(amount);
+}
+
+// #163 S8 gap fix (a): these were stubbed to `return false` pending "inventory items"/"conjured
+// food"|"conjured water" qualifier support. That support already exists (InventoryAction.cpp's
+// Find(), qualifiers "conjured food"/"conjured water") - only these two triggers hadn't been wired
+// back up to it. AC's `sPlayerbotAIConfig.freeFood` random-bot gate doesn't exist in either this
+// fork's or AC's current PlayerbotAIConfig, so it is dropped rather than invented.
+bool NoFoodTrigger::IsActive()
+{
+    return AI_VALUE2(std::vector<Item*>, "inventory items", "conjured food").empty();
+}
+
+bool NoDrinkTrigger::IsActive()
+{
+    return AI_VALUE2(std::vector<Item*>, "inventory items", "conjured water").empty();
+}
+
+bool TargetInSightTrigger::IsActive() { return AI_VALUE(Unit*, "grind target"); }
+
+bool DebuffTrigger::IsActive()
+{
+    Unit* target = GetTarget();
+    if (!target || !target->IsAlive() || !target->IsInWorld())
+    {
+        return false;
+    }
+    return BuffTrigger::IsActive() && (target->GetHealth() / AI_VALUE(float, "estimated group dps")) >= needLifeTime;
+}
+
+bool DebuffOnBossTrigger::IsActive()
+{
+    if (!DebuffTrigger::IsActive())
+    {
+        return false;
+    }
+    Creature* c = GetTarget()->ToCreature();
+    return c && ((c->IsDungeonBoss()) || (c->isWorldBoss()));
+}
+
+bool SpellTrigger::IsActive() { return GetTarget(); }
+
+bool SpellCanBeCastTrigger::IsActive()
+{
+    Unit* target = GetTarget();
+    return target && botAI->CanCastSpell(spell, target);
+}
+
+bool SpellNoCooldownTrigger::IsActive()
+{
+    uint32 spellId = AI_VALUE2(uint32, "spell id", name);
+    if (!spellId)
+        return false;
+
+    return !bot->HasSpellCooldown(spellId);
+}
+
+bool SpellCooldownTrigger::IsActive()
+{
+    uint32 spellId = AI_VALUE2(uint32, "spell id", name);
+    if (!spellId)
+        return false;
+
+    return bot->HasSpellCooldown(spellId);
+}
+
+RandomTrigger::RandomTrigger(PlayerbotAI* botAI, std::string const name, int32 probability)
+    : Trigger(botAI, name), probability(probability), lastCheck(getMSTime())
+{
+}
+
+bool RandomTrigger::IsActive()
+{
+    if (getMSTime() - lastCheck < sPlayerbotAIConfig->repeatDelay)
+        return false;
+
+    lastCheck = getMSTime();
+    int32 k = (int32)(probability / sPlayerbotAIConfig->randomChangeMultiplier);
+    if (k < 1)
+        k = 1;
+    return (rand() % k) == 0;
+}
+
+bool AndTrigger::IsActive() { return ls && rs && ls->IsActive() && rs->IsActive(); }
+
+std::string const AndTrigger::getName()
+{
+    std::string name(ls->getName());
+    name = name + " and ";
+    name = name + rs->getName();
+    return name;
+}
+
+bool TwoTriggers::IsActive()
+{
+    if (name1.empty() || name2.empty())
+        return false;
+
+    Trigger* trigger1 = botAI->GetAiObjectContext()->GetTrigger(name1);
+    Trigger* trigger2 = botAI->GetAiObjectContext()->GetTrigger(name2);
+
+    if (!trigger1 || !trigger2)
+        return false;
+
+    return trigger1->IsActive() && trigger2->IsActive();
+}
+
+std::string const TwoTriggers::getName()
+{
+    std::string name;
+    name = name1 + " and " + name2;
+    return name;
+}
+
+bool BoostTrigger::IsActive()
+{
+    if (!BuffTrigger::IsActive())
+        return false;
+    Unit* target = AI_VALUE(Unit*, "current target");
+    if (target && target->ToPlayer())
+        return true;
+    return AI_VALUE(uint8, "balance") <= balance;
+}
+
+bool GenericBoostTrigger::IsActive()
+{
+    Unit* target = AI_VALUE(Unit*, "current target");
+    if (target && target->ToPlayer())
+        return true;
+    return AI_VALUE(uint8, "balance") <= balance;
+}
+
+bool HealerShouldAttackTrigger::IsActive()
+{
+    // nobody can help me
+    if (botAI->GetNearGroupMemberCount(sPlayerbotAIConfig->sightDistance) <= 1)
+        return true;
+
+    if (AI_VALUE2(uint8, "health", "party member to heal") < sPlayerbotAIConfig->almostFullHealth)
+        return false;
+
+    // special check for resto druid (dont remove tree of life frequently)
+    if (bot->GetAura(33891))
+    {
+        LastSpellCast& lastSpell = botAI->GetAiObjectContext()->GetValue<LastSpellCast&>("last spell cast")->Get();
+        if (lastSpell.timer + 5 > time(nullptr))
+            return false;
+    }
+
+    int manaThreshold;
+    int balance = AI_VALUE(uint8, "balance");
+    // higher threshold in higher pressure
+    if (balance <= 50)
+        manaThreshold = 85;
+    else if (balance <= 100)
+        manaThreshold = sPlayerbotAIConfig->highMana;
+    else
+        manaThreshold = sPlayerbotAIConfig->mediumMana;
+
+    if (AI_VALUE2(bool, "has mana", "self target") && AI_VALUE2(uint8, "mana", "self target") < manaThreshold)
+        return false;
+
+    return true;
+}
+
+bool ItemCountTrigger::IsActive() { return AI_VALUE2(uint32, "item count", item) < count; }
+
+bool InterruptSpellTrigger::IsActive()
+{
+    Unit* target = GetTarget();
+    return target && botAI->IsInterruptableSpellCasting(target, spell) &&
+           (!MopDungeon::GroupPveInterrupt(bot, target) || _gate.Allow(bot, target)) &&
+           PvpInterruptGlue::Allow(bot, target);  // BT-521: late in the cast, behind the kickers that rank first
+}
+
+bool DeflectSpellTrigger::IsActive()
+{
+    Unit* target = GetTarget();
+    if (!target)
+        return false;
+
+    if (!target->IsNonMeleeSpellCasted(true))
+        return false;
+
+    if (target->GetTarget() != bot->GetGUID())
+        return false;
+
+    uint32 spellid = context->GetValue<uint32>("spell id", spell)->Get();
+    if (!spellid)
+        return false;
+
+    SpellInfo const* deflectSpell = sSpellMgr->GetSpellInfo(spellid);
+    if (!deflectSpell)
+        return false;
+
+    // warrior deflects all
+    if (spell == "spell reflection")
+        return true;
+
+    // human priest feedback
+    if (spell == "feedback")
+        return true;
+
+    SpellSchoolMask deflectSchool = SpellSchoolMask(deflectSpell->Effects[EFFECT_0].MiscValue);
+    SpellSchoolMask attackSchool = SPELL_SCHOOL_MASK_NONE;
+
+    if (Spell* spell = target->GetCurrentSpell(CURRENT_GENERIC_SPELL))
+    {
+        if (SpellInfo const* tarSpellInfo = spell->GetSpellInfo())
+        {
+            attackSchool = tarSpellInfo->GetSchoolMask();
+            if (deflectSchool == attackSchool)
+                return true;
+        }
+    }
+    return false;
+}
+
+bool AttackerCountTrigger::IsActive() { return AI_VALUE(uint8, "attacker count") >= amount; }
+
+bool HasAuraTrigger::IsActive() { return botAI->HasAura(getName(), GetTarget(), false, false, -1, true); }
+
+bool HasAuraStackTrigger::IsActive()
+{
+    Aura* aura = botAI->GetAura(getName(), GetTarget(), false, true, stack);
+    // sLog->outMessage("playerbot", LOG_LEVEL_DEBUG, "HasAuraStackTrigger::IsActive %s %d", getName(), aura ?
+    // aura->GetStackAmount() : -1);
+    return aura;
+}
+
+bool TimerTrigger::IsActive()
+{
+    if (time(nullptr) != lastCheck)
+    {
+        lastCheck = time(nullptr);
+        return true;
+    }
+
+    return false;
+}
+
+bool HasNoAuraTrigger::IsActive() { return !botAI->HasAura(getName(), GetTarget()); }
+
+bool TankAssistTrigger::IsActive()
+{
+    if (!AI_VALUE(uint8, "attacker count"))
+        return false;
+
+    Unit* currentTarget = AI_VALUE(Unit*, "current target");
+    if (!currentTarget)
+        return true;
+
+    Unit* tankTarget = AI_VALUE(Unit*, "tank target");
+    if (!tankTarget || currentTarget == tankTarget)
+        return false;
+
+    return AI_VALUE2(bool, "has aggro", "current target");
+}
+
+bool IsBehindTargetTrigger::IsActive()
+{
+    Unit* target = AI_VALUE(Unit*, "current target");
+    return target && AI_VALUE2(bool, "behind", "current target");
+}
+
+bool IsNotBehindTargetTrigger::IsActive()
+{
+    Unit* target = AI_VALUE(Unit*, "current target");
+    return target && !AI_VALUE2(bool, "behind", "current target");
+}
+
+bool IsNotFacingTargetTrigger::IsActive() { return !AI_VALUE2(bool, "facing", "current target"); }
+
+bool NoMovementTrigger::IsActive() { return !AI_VALUE2(bool, "moving", "self target"); }
+
+bool NoPossibleTargetsTrigger::IsActive()
+{
+    GuidVector targets = AI_VALUE(GuidVector, "possible targets");
+    return !targets.size();
+}
+
+bool PossibleAddsTrigger::IsActive() { return AI_VALUE(bool, "possible adds") && !AI_VALUE(BotGuid, "pull target"); }
+
+bool NotDpsTargetActiveTrigger::IsActive()
+{
+    Unit* target = AI_VALUE(Unit*, "current target");
+    // do not switch if enemy target
+    if (target && target->IsAlive())
+    {
+        Unit* enemy = AI_VALUE(Unit*, "enemy player target");
+        if (target == enemy)
+            return false;
+    }
+
+    Unit* dps = AI_VALUE(Unit*, "dps target");
+    return dps && target != dps;
+}
+
+bool NotDpsAoeTargetActiveTrigger::IsActive()
+{
+    Unit* dps = AI_VALUE(Unit*, "dps aoe target");
+    Unit* target = AI_VALUE(Unit*, "current target");
+    Unit* enemy = AI_VALUE(Unit*, "enemy player target");
+
+    // do not switch if enemy target
+    if (target && target == enemy && target->IsAlive())
+        return false;
+
+    return dps && target != dps;
+}
+
+bool IsSwimmingTrigger::IsActive() { return AI_VALUE2(bool, "swimming", "self target"); }
+
+// Ported from AC mod-playerbots StuckTriggers.cpp:144-170 (#149). Uses the "current position" and
+// "combat" values, both already present on this fork (see ReleaseSpiritAction.cpp's
+// RESET_AI_VALUE(bool, "combat::self target") / RESET_AI_VALUE(WorldPosition, "current position")).
+bool CombatStuckTrigger::IsActive()
+{
+    if (!bot->IsInCombat())
+        return false;
+
+    // AC IsRealPlayer(Player*): a master with no PlayerbotAI attached is a person at a client.
+    if (Player* master = botAI->GetMaster())
+        if (!GET_PLAYERBOT_AI(master))
+            return false;
+
+    if (!botAI->AllowActivity(ALL_ACTIVITY))
+        return false;
+
+    MemoryCalculatedValue<bool>* combatVal =
+        dynamic_cast<MemoryCalculatedValue<bool>*>(context->GetUntypedValue("combat::self target"));
+
+    if (combatVal && combatVal->LastChangeDelay() > 5 * MINUTE)
+        return true;
+
+    return false;
+}
+
+bool HasNearestAddsTrigger::IsActive()
+{
+    GuidVector targets = AI_VALUE(GuidVector, "nearest adds");
+    return targets.size();
+}
+
+bool HasItemForSpellTrigger::IsActive()
+{
+    std::string const spell = getName();
+    uint32 spellId = AI_VALUE2(uint32, "spell id", spell);
+    return spellId && AI_VALUE2(Item*, "item for spell", spellId);
+}
+
+bool TargetChangedTrigger::IsActive()
+{
+    Unit* oldTarget = context->GetValue<Unit*>("old target")->Get();
+    Unit* target = context->GetValue<Unit*>("current target")->Get();
+    return target && oldTarget != target;
+}
+
+Value<Unit*>* InterruptEnemyHealerTrigger::GetTargetValue()
+{
+    return context->GetValue<Unit*>("enemy healer target", spell);
+}
+
+// BT-164: healer interrupts take the same group duty turn as current-target interrupts.
+bool InterruptEnemyHealerTrigger::IsActive()
+{
+    Unit* target = GetTarget();
+    return target && (!MopDungeon::GroupPveInterrupt(bot, target) || _gate.Allow(bot, target)) &&
+           PvpInterruptGlue::Allow(bot, target);
+}
+
+bool RandomBotUpdateTrigger::IsActive() { return RandomTrigger::IsActive() && AI_VALUE(bool, "random bot update"); }
+
+// #855 (epic #854): shared rotation triggers, see GenericTriggers.h.
+bool GroupPveEnemyCasterTrigger::IsActive()
+{
+    Unit* target = AI_VALUE(Unit*, "enemy caster target");
+    return MopDungeon::GroupPveInterrupt(bot, target);
+}
+
+bool EnemyCasterInRangeTrigger::IsActive() { return AI_VALUE(Unit*, "enemy caster target") != nullptr; }
+
+bool BotIsCcTrigger::IsActive()
+{
+    return bot->IsAlive() && bot->HasUnitState(UNIT_STATE_STUNNED | UNIT_STATE_FLEEING | UNIT_STATE_CONFUSED);
+}
+
+bool EnemyPlayerInMeleeRangeTrigger::IsActive()
+{
+    if (!bot->IsInWorld() || !bot->IsAlive() || !bot->IsInCombat())
+        return false;
+
+    std::list<Player*> players;
+    bot->GetPlayerListInGrid(players, NOMINAL_MELEE_RANGE);  // alive players, surface distance <= 5 yd
+    for (Player* player : players)
+    {
+        if (player == bot || !bot->IsValidAttackTarget(player) || !bot->CanSeeOrDetect(player))
+            continue;
+
+        return true;
+    }
+
+    return false;
+}
+
+
+bool NewPlayerNearbyTrigger::IsActive() { return AI_VALUE(BotGuid, "new player nearby"); }
+
+bool CollisionTrigger::IsActive() { return AI_VALUE2(bool, "collision", "self target"); }
+
+bool GiveItemTrigger::IsActive()
+{
+    return AI_VALUE2(Unit*, "party member without item", item) && AI_VALUE2(uint32, "item count", item);
+}
+
+bool GiveFoodTrigger::IsActive()
+{
+    return AI_VALUE(Unit*, "party member without food") && AI_VALUE2(uint32, "item count", item);
+}
+
+bool GiveWaterTrigger::IsActive()
+{
+    return AI_VALUE(Unit*, "party member without water") && AI_VALUE2(uint32, "item count", item);
+}
+
+Value<Unit*>* SnareTargetTrigger::GetTargetValue() { return context->GetValue<Unit*>("snare target", spell); }
+
+bool StayTimeTrigger::IsActive()
+{
+    time_t stayTime = AI_VALUE(time_t, "stay time");
+    time_t now = time(nullptr);
+    return delay && stayTime && now > stayTime + 2 * delay / 1000;
+}
+
+// Ported from AC mod-playerbots Ai/Base/Trigger/GenericTriggers.cpp:681-691 (#177).
+bool ReturnToStayPositionTrigger::IsActive()
+{
+    PositionInfo stayPosition = AI_VALUE(PositionMap&, "position")["stay"];
+    if (stayPosition.isSet())
+    {
+        float const distance = bot->GetDistance(stayPosition.x, stayPosition.y, stayPosition.z);
+        return distance > sPlayerbotAIConfig->followDistance;
+    }
+
+    return false;
+}
+
+bool IsMountedTrigger::IsActive() { return AI_VALUE2(bool, "mounted", "self target"); }
+
+bool CorpseNearTrigger::IsActive()
+{
+    return bot->GetCorpse() && bot->GetCorpse()->IsWithinDistInMap(bot, CORPSE_RECLAIM_RADIUS, true);
+}
+
+// Ported from AC mod-playerbots Ai/Base/Trigger/LootTriggers.cpp:12-39 (issue #151), replacing the
+// #149 5-yd corpse-scan diverged body. FarFromCurrentLootTrigger/CanLootTrigger (AC :41-50) are the
+// new strategy/triggers/LootTriggers.h/.cpp; only this trigger stays declared here (see the class
+// comment above) to avoid the ~21-TU GenericTriggers.h rebuild a move would cost.
+bool LootAvailableTrigger::IsActive()
+{
+    if (!AI_VALUE(bool, "has available loot"))
+        return false;
+
+    bool distanceCheck = false;
+    if (botAI->HasStrategy("stay", BOT_STATE_NON_COMBAT))
+    {
+        distanceCheck =
+            sServerFacade->IsDistanceLessOrEqualThan(AI_VALUE2(float, "distance", "loot target"), CONTACT_DISTANCE);
+    }
+    else
+    {
+        distanceCheck = sServerFacade->IsDistanceLessOrEqualThan(AI_VALUE2(float, "distance", "loot target"),
+                                                                  INTERACTION_DISTANCE - 2.0f);
+    }
+
+    // Loot target in range, or no hostile targets to deal with first.
+    if (distanceCheck || AI_VALUE(GuidVector, "all targets").empty())
+        return true;
+
+    // A target that became not loot-possible after being selected - the bot was pulled into combat
+    // while approaching it, or it despawned - never returns to range, so without this it stays
+    // selected forever and the loot action never gets to pick another. Report active so it can.
+    LootObject lootTarget = AI_VALUE(LootObject, "loot target");
+    return !lootTarget.IsEmpty() && !lootTarget.IsLootPossible(bot);
+}
+
+bool IsFallingTrigger::IsActive() { return bot->HasUnitMovementFlag(MOVEMENTFLAG_FALLING); }
+
+bool IsFallingFarTrigger::IsActive() { return bot->HasUnitMovementFlag(MOVEMENTFLAG_FALLING_FAR); }
+
+bool HasAreaDebuffTrigger::IsActive() { return AI_VALUE2(bool, "has area debuff", "self target"); }
+
+Value<Unit*>* BuffOnMainTankTrigger::GetTargetValue() { return context->GetValue<Unit*>("main tank", spell); }
+
+// BT-165: after a control is seen on the target, a break is answered at once by an expert bot, after 1 s by a good one
+// and after 3 s by a casual one. The state is kept per trigger, so each controller keeps its own timing. Alone the
+// bot keeps its old behaviour, so the gate only acts in a group.
+bool HasCcTargetTrigger::ReapplyReady(Unit* target)
+{
+    if (!target || !bot->GetGroup())
+        return true;
+
+    bool const controlled = target->HasBreakableByDamageCrowdControlAura() || botAI->HasAura(getName(), target);
+    return reapplyGate.Ready(target->GetGUID(), controlled, getMSTime(), BotSkill::TierOf(bot));
+}
+
+bool HasCcTargetTrigger::IsCcTargetFree(Unit* ccTarget, Unit* rtiCcTarget)
+{
+    if (!ccTarget || (rtiCcTarget && ccTarget != rtiCcTarget))
+        return false;
+
+    bool const gateReady = ReapplyReady(ccTarget);
+    return !AI_VALUE2(Unit*, "current cc target", getName()) && gateReady;
+}
+
+bool HasCcTargetTrigger::IsActive()
+{
+    // BT-165: in a group the marks decide who controls what (CcDuty), not every extra attacker. Raids use marked
+    // control as dungeons do.
+    bool const marked = bot->GetMap()->IsDungeon() || bot->GetMap()->IsRaid();
+    CcDuty::Required required;
+    if (marked || bot->GetGroup())
+        required = CcDuty::RequiredTarget(botAI);
+
+    Unit* rtiCcTarget = nullptr;
+    if (marked)
+    {
+        rtiCcTarget = required.target;
+        if (!rtiCcTarget)
+            return false;
+    }
+
+    // Watch the control on the marked target every tick, also while the cc target value has nothing to return. The
+    // gate follows one target at a time, so it is left alone when the value picks a different one.
+    Unit* ccTarget = AI_VALUE2(Unit*, "cc target", getName());
+    if (required.target && (!ccTarget || ccTarget == required.target))
+        ReapplyReady(required.target);
+    return IsCcTargetFree(ccTarget, rtiCcTarget);
+}
+
+bool RtiCcTrigger::IsActive()
+{
+    CcDuty::Required const required = CcDuty::RequiredTarget(botAI);
+    Unit* rtiCcTarget = required.target;
+    if (!rtiCcTarget)
+        return false;
+
+    bool const gateReady = ReapplyReady(rtiCcTarget);
+    // BT-165: a duty target takes only the spell the owner chose for it (Hibernate or Cyclone by creature type).
+    if (required.duty && !CcDuty::SpellFitsTarget(getName(), rtiCcTarget))
+        return false;
+
+    Unit* ccTarget = AI_VALUE2(Unit*, "cc target", getName());
+    if (ccTarget && ccTarget == rtiCcTarget)
+        return IsCcTargetFree(ccTarget, rtiCcTarget);
+
+    return gateReady && botAI->CanCastSpell(getName(), rtiCcTarget);
+}
+
+bool CcDutyApproachTrigger::IsActive() { return CcDuty::NeedsApproach(botAI); }
+
+bool NoRtiTrigger::IsActive()
+{
+    if (!bot->IsInCombat())
+        return false;
+
+    return AI_VALUE(Unit*, "rti target") == nullptr;
+}
+
+bool NewPetTrigger::IsActive()
+{
+    BotGuid currentPetGuid = BotGuid::Empty;
+
+    if (Pet* pet = bot->GetPet())
+        currentPetGuid = pet->GetGUID();
+    else if (Guardian* guardian = bot->GetGuardianPet())
+        currentPetGuid = guardian->GetGUID();
+
+    if (currentPetGuid != lastPetGuid)
+    {
+        triggered = false;
+        lastPetGuid = currentPetGuid;
+    }
+
+    if (currentPetGuid != BotGuid::Empty && !triggered)
+    {
+        triggered = true;
+        return true;
+    }
+
+    return false;
+}
+
+bool LowEnergyTrigger::IsActive() { return AI_VALUE2(uint8, "energy", "self target") < threshold; }
+
+bool LossOfControlTrigger::IsActive()
+{
+    bool const lost = bot->HasAuraType(SPELL_AURA_MOD_STUN) || bot->HasAuraType(SPELL_AURA_MOD_FEAR) ||
+                      bot->HasAuraType(SPELL_AURA_MOD_ROOT) || bot->HasAuraType(SPELL_AURA_MOD_CONFUSE) ||
+                      bot->HasAuraType(SPELL_AURA_MOD_CHARM);
+    // In a 1v1 the engine times the racial by skill tier (OneVsOne.h).
+    return lost && OneVsOneGlue::CcBreakAllowed(botAI, bot);
+}
+
+bool FearCharmSleepTrigger::IsActive()
+{
+    bool const lost = bot->HasAuraType(SPELL_AURA_MOD_FEAR) || bot->HasAuraType(SPELL_AURA_MOD_CHARM) ||
+                      bot->HasAuraType(SPELL_AURA_AOE_CHARM) || bot->HasAuraWithMechanic(1 << MECHANIC_SLEEP);
+    return lost && OneVsOneGlue::CcBreakAllowed(botAI, bot);
+}
+
+bool PoisonDiseaseBleedTrigger::IsActive()
+{
+    return botAI->HasAuraToDispel(bot, DISPEL_POISON) || botAI->HasAuraToDispel(bot, DISPEL_DISEASE) ||
+           bot->HasAuraWithMechanic(1 << MECHANIC_BLEED);
+}
+
+bool MovementImpairedTrigger::IsActive()
+{
+    // 5.4.8: PlayerbotAI::IsMovementImpaired() equivalent, inlined (see the class comment).
+    bool const impaired = bot->HasAuraType(SPELL_AURA_MOD_ROOT) || bot->HasUnitState(UNIT_STATE_ROOT) ||
+        bot->GetSpeedRate(MOVE_RUN) < 1.0f;
+    if (impaired && !OneVsOneGlue::CcBreakAllowed(botAI, bot))
+        return false;
+    return impaired && !botAI->HasAnyAuraOf(bot, "stealth", "prowl", nullptr);
+}
+
+// #628 (AC GenericTriggers.cpp:767-770)
+bool ForceRebuffPendingTrigger::IsActive() { return botAI->forceRebuff.IsPending(); }

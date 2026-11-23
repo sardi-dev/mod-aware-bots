@@ -1,0 +1,71 @@
+From 2e4509ab53d7b08a3bcb4cfe55391452429c0c89 Mon Sep 17 00:00:00 2001
+From: sardi-dev <134648583+sardi-dev@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 15:34:02 +0000
+Subject: [PATCH 05/25] Let modules read battleground node and capture point
+ state
+
+Alterac Valley's nodes, mines and captains, Arathi Basin's nodes and
+Eye of the Storm's capture points were private, so modules such as
+player bots could not tell which objectives to attack or defend. Each
+battleground gets small read-only getters for that state.
+
+Based on Legends of Azeroth 5.4.8.
+---
+ src/server/game/Battlegrounds/Zones/BattlegroundAB.h |  6 ++++++
+ src/server/game/Battlegrounds/Zones/BattlegroundAV.h |  4 ++++
+ src/server/game/Battlegrounds/Zones/BattlegroundEY.h | 10 ++++++++++
+ 3 files changed, 20 insertions(+)
+
+diff --git a/src/server/game/Battlegrounds/Zones/BattlegroundAB.h b/src/server/game/Battlegrounds/Zones/BattlegroundAB.h
+index a54f7515e5..6f950953b0 100644
+--- a/src/server/game/Battlegrounds/Zones/BattlegroundAB.h
++++ b/src/server/game/Battlegrounds/Zones/BattlegroundAB.h
+@@ -261,6 +261,12 @@ public:
+     bool CheckAchievementCriteriaMeet(uint32 /*criteriaId*/, Player const* /*player*/, Unit const* /*target*/ = NULL, uint32 /*miscvalue1*/ = 0) OVERRIDE;
+ 
+     uint32 GetPrematureWinner() OVERRIDE;
++    // Read-only node state, for modules such as player bots that pick nodes to attack or defend.
++    uint8 GetNodeStatus(uint8 node) const
++    {
++        return node < BG_AB_DYNAMIC_NODES_COUNT ? m_Nodes[node] : uint8(BG_AB_NODE_TYPE_NEUTRAL);
++    }
++
+ private:
+     void PostUpdateImpl(uint32 diff) OVERRIDE;
+     /* Gameobject spawning/despawning */
+diff --git a/src/server/game/Battlegrounds/Zones/BattlegroundAV.h b/src/server/game/Battlegrounds/Zones/BattlegroundAV.h
+index 0a5f771e4e..d18eb82db2 100644
+--- a/src/server/game/Battlegrounds/Zones/BattlegroundAV.h
++++ b/src/server/game/Battlegrounds/Zones/BattlegroundAV.h
+@@ -1561,6 +1561,10 @@ public:
+ 
+     uint32 GetPrematureWinner() OVERRIDE;
+ 
++    // Read-only node, mine and captain state, for modules such as player bots.
++    BG_AV_NodeInfo const& GetAVNodeInfo(uint32 node) const { return m_Nodes[node]; }
++    bool IsCaptainAlive(uint8 index) const { return m_CaptainAlive[index]; }
++    uint32 GetMineOwner(uint8 index) const { return m_Mine_Owner[index]; }
+ private:
+     void PostUpdateImpl(uint32 diff) OVERRIDE;
+ 
+diff --git a/src/server/game/Battlegrounds/Zones/BattlegroundEY.h b/src/server/game/Battlegrounds/Zones/BattlegroundEY.h
+index 59e30f46c6..dc0e912315 100644
+--- a/src/server/game/Battlegrounds/Zones/BattlegroundEY.h
++++ b/src/server/game/Battlegrounds/Zones/BattlegroundEY.h
+@@ -357,6 +357,16 @@ public:
+     bool IsAllNodesControlledByTeam(uint32 team) const OVERRIDE;
+ 
+     uint32 GetPrematureWinner() OVERRIDE;
++    // Read-only capture point state, for modules such as player bots.
++    uint32 GetPointOwnedByTeam(uint8 point) const
++    {
++        return point < EY_POINTS_MAX ? m_PointOwnedByTeam[point] : uint32(EY_POINT_NO_OWNER);
++    }
++    uint8 GetPointState(uint8 point) const
++    {
++        return point < EY_POINTS_MAX ? m_PointState[point] : uint8(EY_POINT_NO_OWNER);
++    }
++
+ private:
+     void PostUpdateImpl(uint32 diff) OVERRIDE;
+ 
