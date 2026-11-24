@@ -438,6 +438,7 @@ namespace
     {
         std::set<uint32> done;                       // boss entries seen dead
         std::unordered_map<uint32, uint32> skipped;  // boss entry -> getMSTime() it was skipped at
+        std::unordered_map<uint32, uint32> skipCount;  // boss entry -> how often it was skipped this run
         uint32 waitSince = 0;                        // 0 = not waiting for the group
         uint32 readyFreeUntil = 0;                   // after a wait ran out, no waiting until then
         uint32 progressAt = 0;
@@ -672,6 +673,12 @@ namespace
             ++left;
             auto const itr = state.skipped.find(boss.entry);
             if (itr == state.skipped.end() || Elapsed(itr->second, now, s.skipMs))
+                continue;
+
+            // A first skip can have a passing cause (no line of sight from the spot, a boss in its intro, a scripted boss
+            // not at its spawn yet): only a boss skipped again after its skip ran out counts toward a stalled run.
+            auto const count = state.skipCount.find(boss.entry);
+            if (count == state.skipCount.end() || count->second < LfgStallPolicy::SKIPS_FOR_STALL)
                 continue;
 
             if (!skipped++ || int32(itr->second - firstSkip) < 0)
@@ -1198,6 +1205,7 @@ bool LfgCrawlAction::Execute(Event /*event*/)
             SF_LOG_INFO("playerbots", "[CRAWL] %s makes no progress toward %s, skipping it for a while", bot->GetName().c_str(),
                         name);
             state.skipped[key] = now;
+            ++state.skipCount[key];
             state.progressAt = 0;
             return true;
         }
@@ -1421,6 +1429,7 @@ bool LfgCrawlAction::Execute(Event /*event*/)
                         SF_LOG_INFO("playerbots", "[CRAWL] %s: %s is not cleared after %u s, moving on", bot->GetName().c_str(), step.name,
                                     step.seconds);
                         state.skipped[key] = now;
+                        ++state.skipCount[key];
                         state.progressAt = 0;
                     }
                     return true;
@@ -1587,6 +1596,7 @@ bool LfgCrawlAction::Execute(Event /*event*/)
             }
 
             state.skipped[boss->entry] = now;
+            ++state.skipCount[boss->entry];
             return false;
         }
 
@@ -1611,6 +1621,7 @@ bool LfgCrawlAction::Execute(Event /*event*/)
             SF_LOG_INFO("playerbots", "[CRAWL] %s: the boss %s is not at its spawn, skipping it", bot->GetName().c_str(),
                         boss->name.c_str());
             state.skipped[boss->entry] = now;
+            ++state.skipCount[boss->entry];
             return true;
         }
     }

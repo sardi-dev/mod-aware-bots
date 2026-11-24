@@ -25,3 +25,11 @@ TEST(lfg_teleport_the_last_ask_is_given_time_before_the_bot_leaves)
 {
     CHECK(Next(MAX_ASKS, true, 1000) == Step::Wait);
 }
+
+TEST(lfg_teleport_a_new_time_outside_starts_a_new_count)
+{
+    CHECK(!NewEpisode(false, 0));
+    CHECK(!NewEpisode(true, ASK_GAP_MS));
+    CHECK(!NewEpisode(true, NEW_EPISODE_MS));
+    CHECK(NewEpisode(true, NEW_EPISODE_MS + 1));
+}

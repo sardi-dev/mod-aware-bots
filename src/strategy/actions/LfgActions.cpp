@@ -437,6 +437,8 @@ bool LfgTeleportRetryAction::Execute(Event /*event*/)
         RetryState& state = retries[bot->GetGUIDLow()];
         if (state.groupGuid != group->GetGUID())
             state = RetryState{ group->GetGUID(), 0, 0 };
+        else if (LfgTeleportPolicy::NewEpisode(state.lastMs != 0, state.lastMs ? getMSTimeDiff(state.lastMs, now) : 0))
+            state.asks = 0;
 
         LfgTeleportPolicy::Step const step =
             LfgTeleportPolicy::Next(state.asks, state.lastMs != 0, state.lastMs ? getMSTimeDiff(state.lastMs, now) : 0);

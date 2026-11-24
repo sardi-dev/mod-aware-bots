@@ -11,6 +11,14 @@ namespace LfgTeleportPolicy
 {
 constexpr uint32_t MAX_ASKS = 3;
 constexpr uint32_t ASK_GAP_MS = 15000;
+// A longer silence than this since the last ask means the bot got into the dungeon in between (asks come every
+// ASK_GAP_MS while it is outside): the next time it is outside starts a new count, so only failed asks in a row count.
+constexpr uint32_t NEW_EPISODE_MS = 120000;
+
+constexpr bool NewEpisode(bool everAsked, uint32_t msSinceLastAsk)
+{
+    return everAsked && msSinceLastAsk > NEW_EPISODE_MS;
+}
 
 enum class Step : uint8_t
 {

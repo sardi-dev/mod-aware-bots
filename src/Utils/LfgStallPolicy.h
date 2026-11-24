@@ -25,6 +25,10 @@ constexpr bool RunStalled(uint32_t bossesLeft, uint32_t bossesSkipped, bool pull
     return bossesLeft > 0 && bossesSkipped >= bossesLeft && !pulledSinceFirstSkip;
 }
 
+// A boss counts as unreachable only after it was skipped this many times in a run (a retry after the skip ran out also
+// failed); one skip can have a passing cause.
+constexpr uint32_t SKIPS_FOR_STALL = 2;
+
 constexpr int64_t SECONDS_PER_HOUR = 3600;
 
 // The end of a dungeon's cooldown after a failed run; 0 hours means no cooldown.

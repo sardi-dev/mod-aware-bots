@@ -13,6 +13,13 @@ and this project follows [Semantic Versioning](https://semver.org/).
   - Why: Every feature the module has is named in the README, marked Ready or In development.
 
 ### Fixed
+- **Review fixes for the new run, sweep and teleport rules** (2026-11-24)
+  - Summary: A bot-led run is given up only when every boss left was skipped twice (a retry after the skip ran out also
+    failed), not after one failed pull; the leftover-group sweep leaves a member alone while it is in a battleground or
+    battlefield raid; a finder bot counts only failed teleport asks in a row (a new time outside starts a new count); a
+    dropped-mark timer no longer carries over time from an earlier wait.
+  - Why: A code review found that a single failed pull on the last boss rested the dungeon for hours, that the sweep
+    could take a bot out of its battleground raid, and that a bot could leave a finder group late in a run.
 - **The auction soak bots go to the auction house when they stand in a town** (2026-11-24)
   - Summary: While `AiPlayerbot.Auction.OnlyBots` names bots, a named bot whose auction visit is allowed (cooldown passed, not human-led, no visit under way) that is idle in a town with an auctioneer within 200 yd now switches to its town errands (`BotAuction::SoakVisitDue`, logged as `[AUCTION] ... visit is due, goes there`), and the errand choice sends it to the auctioneer before the idle errands (`ErrandPolicy::Town::auctionDue`, `AuctionVisitPolicy::SoakWantsVisit`, three unit tests). Bots that are not named, and every bot while the list is empty, keep the ordinary odds. Nothing is given to a bot: it sells only what it carries and walks there itself.
   - Why: Seven named bots made two auction house visits in 15 hours. An auction errand needs an idle draw of the town errand status (about 6 percent of the draws), then a third of the idle errands, and the bots are in town only briefly; most of them also stood in saved bot groups that follow a leader far away and run no errands at all (see the stale group entry).

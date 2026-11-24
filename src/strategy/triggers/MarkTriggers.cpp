@@ -98,6 +98,7 @@ bool MarkedTargetReadyTrigger::IsActive()
     {
         waitingSince = 0;
         readySince = 0;
+        unreachableSince = 0;
         return false;
     }
 
@@ -106,6 +107,7 @@ bool MarkedTargetReadyTrigger::IsActive()
     {
         waitingSince = 0;
         readySince = 0;
+        unreachableSince = 0;
         return false;
     }
 
@@ -127,6 +129,7 @@ bool MarkedTargetReadyTrigger::IsActive()
         NoteBlocker(target, "the mark cannot be pulled", "", false);
         waitingSince = 0;
         readySince = 0;
+        unreachableSince = 0;
         return false;
     }
     float const distance = bot->GetDistance(target);

@@ -114,6 +114,11 @@ void BotGroupSweep::Update()
             if (!StaleGroupPolicy::Apart(leaderOnline, sameMap, distance, settings.apartYards))
                 continue;
 
+            // A bot in a battleground or battlefield has its raid as current group and this party as its original
+            // group; RemoveFromGroup() would act on the raid. Leave such a member alone until it is back.
+            if (member->GetGroup() != group)
+                continue;
+
             uint32 const low = member->GetGUIDLow();
             stillApart.insert(low);
             time_t& since = apartSince[low];
