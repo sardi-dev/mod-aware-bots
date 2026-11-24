@@ -21,6 +21,14 @@ struct Failure
 };
 using Book = std::unordered_map<uint32_t, Failure>;
 
+enum class QuestEvent { Accepted, Dropped, Progress, Rewarded };
+
+inline void OnQuestEvent(Book& book, uint32_t questId, QuestEvent event)
+{
+    if (event == QuestEvent::Progress || event == QuestEvent::Rewarded)
+        book.erase(questId);
+}
+
 inline bool Advanced(std::vector<uint32_t> const& before, std::vector<uint32_t> const& after)
 {
     for (std::size_t i = 0; i < before.size() && i < after.size(); ++i)
@@ -37,10 +45,18 @@ inline uint32_t Delay(uint32_t tries)
 // BT-381: the reasons that mean the bot could not reach the place (the texts the trip failures log).
 constexpr char const* STUCK_ON_THE_WAY = "stuck on the way";
 constexpr char const* STOOD_STILL = "stood still";
+constexpr char const* TRANSPORT_WALK_STALLED = "the walk to the transport stalled";
 
 inline bool IsStuckReason(char const* why)
 {
-    return why && (!std::strcmp(why, STUCK_ON_THE_WAY) || !std::strcmp(why, STOOD_STILL));
+    return why && (!std::strcmp(why, STUCK_ON_THE_WAY) || !std::strcmp(why, STOOD_STILL) ||
+                   !std::strcmp(why, TRANSPORT_WALK_STALLED));
+}
+
+inline bool IsTransportWalkStall(char const* why)
+{
+    return why && (!std::strcmp(why, "walk-stall") || !std::strcmp(why, "taxi-walk-stall") ||
+                   !std::strcmp(why, "portal-walk-stall") || !std::strcmp(why, "dock-walk-stall"));
 }
 
 // BT-381: a second failure of that kind on the same quest is no accident of the path (an island, a ledge, a closed

@@ -1187,7 +1187,7 @@ bool NewRpgDoQuestAction::DoIncompleteQuest(NewRpgInfo::DoQuest& data)
         if (objectiveComplete(data.objectiveIdx))
         {
             if (data.lastReachPOI && QuestRetryPolicy::Advanced(data.objectiveProgress, progress()))
-                botAI->GetQuestRetries().erase(questId);
+                QuestRetryPolicy::OnQuestEvent(botAI->GetQuestRetries(), questId, QuestRetryPolicy::QuestEvent::Progress);
             data.lastReachPOI = 0;
             data.pos = WorldPosition();
             data.objectiveIdx = 0;
@@ -1285,7 +1285,7 @@ bool NewRpgDoQuestAction::DoIncompleteQuest(NewRpgInfo::DoQuest& data)
             botAI->GetRpgInfo().ChangeToIdle();
             return true;
         }
-        botAI->GetQuestRetries().erase(questId);
+        QuestRetryPolicy::OnQuestEvent(botAI->GetQuestRetries(), questId, QuestRetryPolicy::QuestEvent::Progress);
 
         // clear and select another poi later
         data.lastReachPOI = 0;

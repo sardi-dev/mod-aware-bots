@@ -1652,7 +1652,10 @@ int32 NewRpgBaseAction::RoamTransportMove(WorldPosition const& dest, bool maySta
 
     auto abandon = [&](char const* why) -> int32
     {
+        bool const handInWalkStalled = HandInTripOwns(trip.dest) && QuestRetryPolicy::IsTransportWalkStall(why);
         EndTrip(trip, bot, now, why);
+        if (handInWalkStalled)
+            FailHandInTrip(QuestRetryPolicy::TRANSPORT_WALK_STALLED);
         return -1;
     };
 

@@ -13,6 +13,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
   - Why: Every feature the module has is named in the README, marked Ready or In development.
 
 ### Fixed
+- **Quest retry history survives the quest log** (2026-11-24)
+  - Summary: A bot's failure record for a quest is no longer wiped when it accepts the quest again or drops it, only
+    when it makes progress or hands the quest in, and quest picks skip a quest that is still backing off. A stalled walk
+    to a cross-map transport is reported as such and backed off like a trip stuck on the way.
+  - Why: Bots retried the same unreachable quest again and again (the record went back to the first try each time it
+    was picked up again), and transport walk stalls were reported as missing routes.
 - **A cancelled trade no longer raises liking** (2026-11-24)
   - Summary: After the bot's accept closes a trade, liking is credited only when money or an item really moved (the
     bot's money, its offered items and the other side's items are compared before and after the accept).

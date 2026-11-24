@@ -648,7 +648,7 @@ bool NewRpgBaseAction::DoQuestItemFetch(Quest const* quest, bool mayStart, bool&
             SF_LOG_INFO("playerbots", "[QUEST] %s has %u/%u %s for %u %s", bot->GetName().c_str(), count, fetch.needed,
                         QuestItemSourceIndex::ItemName(fetch.itemId).c_str(), quest->GetQuestId(),
                         quest->GetTitle().c_str());
-            botAI->GetQuestRetries().erase(quest->GetQuestId());
+            QuestRetryPolicy::OnQuestEvent(botAI->GetQuestRetries(), quest->GetQuestId(), QuestRetryPolicy::QuestEvent::Progress);
             fetch = QuestItemSourcePolicy::Fetch();
             return true;
         case QuestItemSourcePolicy::Step::Expired:

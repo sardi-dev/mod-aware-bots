@@ -924,7 +924,7 @@ bool NewRpgBaseAction::DoQuestInteraction(Quest const* quest, bool mayStart, boo
         case QuestInteractPolicy::Step::Done:
             SF_LOG_INFO("playerbots", "[QUEST] %s has %u/%u credits for %u %s", bot->GetName().c_str(), count,
                         trip.needed, quest->GetQuestId(), quest->GetTitle().c_str());
-            botAI->GetQuestRetries().erase(quest->GetQuestId());
+            QuestRetryPolicy::OnQuestEvent(botAI->GetQuestRetries(), quest->GetQuestId(), QuestRetryPolicy::QuestEvent::Progress);
             trip = QuestInteractPolicy::Trip();
             return true;
         case QuestInteractPolicy::Step::Expired:

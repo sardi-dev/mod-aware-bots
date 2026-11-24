@@ -807,7 +807,7 @@ bool NewRpgBaseAction::InteractWithNpcOrGameObjectForQuest(BotGuid guid)
 
         QuestStatus const status = bot->GetQuestStatus(item.QuestId);
 
-        if (status == QUEST_STATUS_NONE && bot->CanTakeQuest(quest, false) && bot->CanAddQuest(quest, false) &&
+        if (status == QUEST_STATUS_NONE && !QuestRetryWaiting(item.QuestId) && bot->CanTakeQuest(quest, false) && bot->CanAddQuest(quest, false) &&
             IsQuestWorthDoing(quest) && IsQuestCapableDoing(quest))
         {
             bool const didAccept = AcceptQuest(quest, guid);
@@ -963,7 +963,7 @@ bool NewRpgBaseAction::AcceptQuest(Quest const* quest, BotGuid guid)
     if (!questGiver)
         return false;
 
-    botAI->GetQuestRetries().erase(quest->GetQuestId());
+    QuestRetryPolicy::OnQuestEvent(botAI->GetQuestRetries(), quest->GetQuestId(), QuestRetryPolicy::QuestEvent::Accepted);
     BotAddQuestAndCheckCompletion(bot, quest, questGiver);
     return true;
 }
@@ -999,7 +999,7 @@ bool NewRpgBaseAction::TurnInQuest(Quest const* quest, BotGuid guid)
     // PORT: SkyFire's PlayDistanceSound needs a target and plays to that player only; a bot has no client.
     bot->PlayDistanceSound(621, bot);
     bot->RewardQuest(quest, rewardItemId, questGiver);
-    botAI->GetQuestRetries().erase(questId);
+    QuestRetryPolicy::OnQuestEvent(botAI->GetQuestRetries(), questId, QuestRetryPolicy::QuestEvent::Rewarded);
     QuestHandInPolicy::Trip& trip = botAI->GetHandInTrip();
     if (trip.active && trip.questId == questId)
     {
@@ -1148,7 +1148,7 @@ bool NewRpgBaseAction::DropQuest(uint32 questId)
     bot->UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_QUEST_ABANDONED, 1);
 
     botAI->GetRpgStatistic().questDropped++;
-    botAI->GetQuestRetries().erase(questId);
+    QuestRetryPolicy::OnQuestEvent(botAI->GetQuestRetries(), questId, QuestRetryPolicy::QuestEvent::Dropped);
     return true;
 }
 
@@ -1388,7 +1388,7 @@ bool NewRpgBaseAction::HasQuestToAcceptOrReward(WorldObject* object)
                          bot->CanTakeQuest(quest, false) ? 1 : 0, bot->CanAddQuest(quest, false) ? 1 : 0,
                          IsQuestWorthDoing(quest) ? 1 : 0, IsQuestCapableDoing(quest) ? 1 : 0);
 
-        if (bot->GetQuestStatus(item.QuestId) == QUEST_STATUS_NONE && bot->CanTakeQuest(quest, false) &&
+        if (bot->GetQuestStatus(item.QuestId) == QUEST_STATUS_NONE && !QuestRetryWaiting(item.QuestId) && bot->CanTakeQuest(quest, false) &&
             bot->CanAddQuest(quest, false) && IsQuestWorthDoing(quest) && IsQuestCapableDoing(quest))
             return true;
     }
@@ -2554,7 +2554,8 @@ bool NewRpgBaseAction::RandomChangeStatus(std::vector<NewRpgStatus> candidateSta
             {
                 auto canTake = [this](Quest const* quest)
                 {
-                    return bot->GetQuestStatus(quest->GetQuestId()) == QUEST_STATUS_NONE && bot->CanTakeQuest(quest, false) &&
+                    return bot->GetQuestStatus(quest->GetQuestId()) == QUEST_STATUS_NONE && !QuestRetryWaiting(quest->GetQuestId()) &&
+                           bot->CanTakeQuest(quest, false) &&
                            bot->CanAddQuest(quest, false) && IsQuestWorthDoing(quest) && IsQuestCapableDoing(quest);
                 };
                 QuestHubSearch::Pick pick;
@@ -2715,7 +2716,8 @@ bool NewRpgBaseAction::CheckRpgStatusAvailable(NewRpgStatus status)
             {
                 auto canTake = [this](Quest const* quest)
                 {
-                    return bot->GetQuestStatus(quest->GetQuestId()) == QUEST_STATUS_NONE && bot->CanTakeQuest(quest, false) &&
+                    return bot->GetQuestStatus(quest->GetQuestId()) == QUEST_STATUS_NONE && !QuestRetryWaiting(quest->GetQuestId()) &&
+                           bot->CanTakeQuest(quest, false) &&
                            bot->CanAddQuest(quest, false) && IsQuestWorthDoing(quest) && IsQuestCapableDoing(quest);
                 };
                 QuestHubSearch::Pick pick;
