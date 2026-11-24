@@ -418,11 +418,13 @@ TEST(sql_retention_agrees_with_the_policys_forgettable_rule)
 TEST(sql_forgetting_a_character_covers_both_roles)
 {
     std::vector<std::string> const sql = LikingBook::ForgetPlayerSql(5001, true);
-    CHECK(sql.size() == 3);
+    CHECK(sql.size() == 5);
     CHECK(sql[0] == "DELETE FROM `playerbots_social_liking` WHERE `player_guid` = 5001");
     CHECK(sql[1] == "DELETE FROM `playerbots_social_offer` WHERE `player_guid` = 5001");
-    CHECK(sql[2] == "DELETE FROM `playerbots_social_liking` WHERE `bot_guid` = 5001");
-    CHECK(LikingBook::ForgetPlayerSql(5001, false).size() == 2);
+    CHECK(sql[2] == "DELETE FROM `playerbots_social_quest_offer` WHERE `player_guid` = 5001");
+    CHECK(sql[3] == "DELETE FROM `playerbots_social_liking` WHERE `bot_guid` = 5001");
+    CHECK(sql[4] == "DELETE FROM `playerbots_social_quest_offer` WHERE `bot_guid` = 5001");
+    CHECK(LikingBook::ForgetPlayerSql(5001, false).size() == 3);
 }
 TEST(quest_offer_needs_the_rows_loaded_and_enough_liking)
 {
@@ -507,4 +509,46 @@ TEST(quest_offer_the_pair_list_does_not_grow_for_good)
     // Old offers (past the cooldown) are dropped once the list is at its limit, so every bot can offer again later.
     for (uint32_t bot = 1; bot <= 200; ++bot)
         CHECK(book.TakeQuestOffer(tuning, HUMAN, bot, NOW + bot * 4 * 3600, 3600));
+}
+
+TEST(quest_offer_history_survives_logout_and_restart)
+{
+    Tuning const tuning;
+    uint32_t const cooldown = 6 * 3600;
+    std::vector<Row> const rows = { StoredRow(BOT_A, 0.9, NOW), StoredRow(BOT_B, 0.9, NOW), StoredRow(73, 0.9, NOW) };
+    Book first;
+    first.Begin(HUMAN);
+    first.Load(tuning, HUMAN, rows, 0);
+    CHECK(first.TakeQuestOffer(tuning, HUMAN, BOT_A, NOW, cooldown));
+    CHECK(first.TakeQuestOffer(tuning, HUMAN, BOT_B, NOW + 1800, cooldown));
+    std::vector<LikingBook::QuestOffer> const saved = first.TakeQuestDirty(HUMAN);
+    CHECK(saved.size() == 2);
+    first.End(HUMAN);
+
+    Book reloaded;
+    reloaded.Begin(HUMAN);
+    reloaded.Load(tuning, HUMAN, rows, 0, saved);
+    CHECK(!reloaded.TakeQuestOffer(tuning, HUMAN, 73, NOW + 3599, cooldown));
+    CHECK(reloaded.TakeQuestOffer(tuning, HUMAN, 73, NOW + 3600, cooldown));
+    CHECK(!reloaded.TakeQuestOffer(tuning, HUMAN, BOT_A, NOW + 3601, cooldown));
+    CHECK(!reloaded.TakeQuestOffer(tuning, HUMAN, BOT_A, NOW + cooldown - 1, cooldown));
+    CHECK(reloaded.TakeQuestOffer(tuning, HUMAN, BOT_A, NOW + cooldown, cooldown));
+}
+TEST(quest_offer_rolling_hour_counts_across_window_boundaries)
+{
+    Tuning const tuning;
+    Book book;
+    book.Begin(HUMAN);
+    book.Load(tuning, HUMAN, { StoredRow(BOT_A, 0.9, NOW), StoredRow(BOT_B, 0.9, NOW), StoredRow(73, 0.9, NOW) }, 0);
+    CHECK(book.TakeQuestOffer(tuning, HUMAN, BOT_A, NOW, 0));
+    CHECK(book.TakeQuestOffer(tuning, HUMAN, BOT_B, NOW + 3599, 0));
+    CHECK(book.TakeQuestOffer(tuning, HUMAN, 73, NOW + 3600, 0));
+    CHECK(!book.TakeQuestOffer(tuning, HUMAN, BOT_A, NOW + 3601, 0));
+}
+TEST(sql_quest_offer_history_and_retention)
+{
+    CHECK(LikingBook::QuestOfferInsertSql({ 5001, 72, 1234 }) ==
+        "INSERT INTO `playerbots_social_quest_offer` (`player_guid`, `bot_guid`, `offered_at`) VALUES (5001, 72, 1234)");
+    CHECK(LikingBook::QuestRetentionSql(NOW, 1, 2 * DAY) ==
+        "DELETE FROM `playerbots_social_quest_offer` WHERE `offered_at` < " + std::to_string(NOW - 2 * DAY));
 }

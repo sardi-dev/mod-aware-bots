@@ -13,6 +13,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
   - Why: Every feature the module has is named in the README, marked Ready or In development.
 
 ### Fixed
+- **Shared-quest offer limits survive a logout and a restart** (2026-11-24)
+  - Summary: The per-human limit (offers per rolling hour across all bots) and the bot and human pair cooldown were
+    kept in memory only; the offers now go to a `playerbots_social_quest_offer` table (created at startup like the other
+    social tables) and both limits are rebuilt from it when the human is loaded.
+  - Why: After a logout or a restart a human could get offers again at once, more often than the documented limits.
 - **Review fixes for the new run, sweep and teleport rules** (2026-11-24)
   - Summary: A bot-led run is given up only when every boss left was skipped twice (a retry after the skip ran out also
     failed), not after one failed pull; the leftover-group sweep leaves a member alone while it is in a battleground or

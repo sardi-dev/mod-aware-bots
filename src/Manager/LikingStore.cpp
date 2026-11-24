@@ -58,6 +58,18 @@ namespace
         "PRIMARY KEY (`player_guid`, `kind`)"
         ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
 
+    char const* const CREATE_QUEST_OFFER =
+        "CREATE TABLE IF NOT EXISTS `playerbots_social_quest_offer` ("
+        "`id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,"
+        "`player_guid` INT UNSIGNED NOT NULL,"
+        "`bot_guid` INT UNSIGNED NOT NULL,"
+        "`offered_at` INT UNSIGNED NOT NULL,"
+        "PRIMARY KEY (`id`),"
+        "KEY `idx_quest_offer_player` (`player_guid`),"
+        "KEY `idx_quest_offer_bot` (`bot_guid`),"
+        "KEY `idx_quest_offer_at` (`offered_at`)"
+        ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
+
     // Seconds between the passes that credit group and guild time and flush the changed rows.
     constexpr uint32 PASS_SECONDS = 60;
     constexpr uint32 GUILD_STEP_SECONDS = LikingPolicy::SECONDS_PER_HOUR;
@@ -74,6 +86,7 @@ namespace
     {
         QueryResultFuture rows;
         QueryResultFuture offers;
+        QueryResultFuture questOffers;
         uint32 askedAt = 0;
     };
 
@@ -176,6 +189,7 @@ namespace
 
         PlayerbotsDatabase.DirectExecute(CREATE_LIKING);
         PlayerbotsDatabase.DirectExecute(CREATE_OFFER);
+        PlayerbotsDatabase.DirectExecute(CREATE_QUEST_OFFER);
         tablesReady = true;
         SF_LOG_INFO("playerbots", "[SOCIAL] liking tables ready");
     }
@@ -190,6 +204,7 @@ namespace
         {
             entry->rows.cancel();
             entry->offers.cancel();
+            entry->questOffers.cancel();
         }
 
         entry->askedAt = now;
@@ -199,6 +214,11 @@ namespace
         entry->offers = PlayerbotsDatabase.AsyncPQuery(
             "SELECT `last_at` FROM `playerbots_social_offer` WHERE `player_guid` = %u AND `kind` = %u", human,
             LikingBook::OFFER_KIND_GUILD);
+        uint32 const span = std::max(sPlayerbotAIConfig->socialQuestOffer.pairCooldownSeconds, LikingPolicy::SECONDS_PER_HOUR);
+        uint32 const cutoff = now > span ? now - span : 0;
+        entry->questOffers = PlayerbotsDatabase.AsyncPQuery(
+            "SELECT `bot_guid`, `offered_at` FROM `playerbots_social_quest_offer` WHERE `player_guid` = %u AND `offered_at` >= %u",
+            human, cutoff);
     }
 
     void BeginHumanLocked(uint32 human, uint32 now)
@@ -217,12 +237,14 @@ namespace
         for (auto itr = loading.begin(); itr != loading.end();)
         {
             Loading& entry = *itr->second;
-            if (entry.rows.ready() && entry.offers.ready())
+            if (entry.rows.ready() && entry.offers.ready() && entry.questOffers.ready())
             {
                 QueryResult rowsResult;
                 QueryResult offersResult;
+                QueryResult questResult;
                 entry.rows.get(rowsResult);
                 entry.offers.get(offersResult);
+                entry.questOffers.get(questResult);
 
                 std::vector<LikingBook::Row> rows;
                 if (rowsResult)
@@ -242,7 +264,16 @@ namespace
                 }
 
                 uint32 const offerAt = offersResult ? offersResult->Fetch()[0].GetUInt32() : 0;
-                book.Load(Tuning(), itr->first, rows, offerAt);
+                std::vector<LikingBook::QuestOffer> questOffers;
+                if (questResult)
+                {
+                    do
+                    {
+                        Field* f = questResult->Fetch();
+                        questOffers.push_back({ itr->first, f[0].GetUInt32(), f[1].GetUInt32() });
+                    } while (questResult->NextRow());
+                }
+                book.Load(Tuning(), itr->first, rows, offerAt, questOffers);
                 itr = loading.erase(itr);
             }
             else if (now >= entry.askedAt + LOAD_RETRY_SECONDS)
@@ -290,6 +321,8 @@ namespace
     void RetentionLocked(uint32 now)
     {
         ExecuteAll(LikingBook::RetentionSql(Tuning(), now, sPlayerbotAIConfig->socialLikingRetentionDays));
+        PlayerbotsDatabase.Execute(LikingBook::QuestRetentionSql(now, sPlayerbotAIConfig->socialLikingRetentionDays,
+            sPlayerbotAIConfig->socialQuestOffer.pairCooldownSeconds).c_str());
     }
 
     // The once-a-minute pass: humans the book does not know yet, then group time and guild time.
@@ -673,7 +706,11 @@ bool LikingStore::MayOfferQuestGroup(Player* bot, Player* human, uint32 pairCool
     std::lock_guard<std::mutex> guard(storeLock);
     // A human who is online and was never seen starts loading now; the offer waits for the next pass.
     BeginHumanLocked(humanLow, Now());
-    return book.TakeQuestOffer(Tuning(), humanLow, resolvedBot->GetGUIDLow(), Now(), pairCooldownSeconds);
+    bool const taken = book.TakeQuestOffer(Tuning(), humanLow, resolvedBot->GetGUIDLow(), Now(), pairCooldownSeconds);
+    if (taken)
+        for (LikingBook::QuestOffer const& offer : book.TakeQuestDirty(humanLow))
+            PlayerbotsDatabase.Execute(LikingBook::QuestOfferInsertSql(offer).c_str());
+    return taken;
 }
 
 std::vector<std::string> LikingStore::Console(std::string const& args)
@@ -685,7 +722,7 @@ std::vector<std::string> LikingStore::Console(std::string const& args)
 
     if (action != "wipe" || target.empty())
         return { "Usage: .playerbots social wipe <character name>|all",
-            "Deletes the liking rows and guild offer times kept for that character (as a human and as a bot), or for everyone." };
+            "Deletes the liking rows and offer times kept for that character (as a human and as a bot), or for everyone." };
 
     std::lock_guard<std::mutex> guard(storeLock);
     EnsureTablesLocked();
@@ -693,9 +730,11 @@ std::vector<std::string> LikingStore::Console(std::string const& args)
     if (target == "all")
     {
         uint64 const rows = CountRows("playerbots_social_liking", "1 = 1");
-        uint64 const offers = CountRows("playerbots_social_offer", "1 = 1");
+        uint64 const offers = CountRows("playerbots_social_offer", "1 = 1") +
+            CountRows("playerbots_social_quest_offer", "1 = 1");
         book.WipeAll();
-        ExecuteAll({ "DELETE FROM `playerbots_social_liking`", "DELETE FROM `playerbots_social_offer`" });
+        ExecuteAll({ "DELETE FROM `playerbots_social_liking`", "DELETE FROM `playerbots_social_offer`",
+            "DELETE FROM `playerbots_social_quest_offer`" });
         return { "Liking wipe: removed " + std::to_string(rows) + " rows and " + std::to_string(offers) + " offer times for every character.",
             AiChat::WipeSidecar(std::nullopt) };
     }
@@ -711,7 +750,8 @@ std::vector<std::string> LikingStore::Console(std::string const& args)
 
     std::string const where = "`player_guid` = " + std::to_string(low) + " OR `bot_guid` = " + std::to_string(low);
     uint64 const rows = CountRows("playerbots_social_liking", where);
-    uint64 const offers = CountRows("playerbots_social_offer", "`player_guid` = " + std::to_string(low));
+    uint64 const offers = CountRows("playerbots_social_offer", "`player_guid` = " + std::to_string(low)) +
+        CountRows("playerbots_social_quest_offer", where);
     book.Wipe(low);
     book.ForgetBot(low);
     ExecuteAll(LikingBook::ForgetPlayerSql(low, true));

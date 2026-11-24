@@ -25,6 +25,13 @@
 namespace LikingBook
 {
 // One row of the table.
+struct QuestOffer
+{
+    uint32_t human = 0;
+    uint32_t bot = 0;
+    uint32_t at = 0;
+};
+
 struct Row
 {
     uint32_t bot = 0;
@@ -59,7 +66,8 @@ public:
 
     // The rows of the database arrived (offerAt is the stored time of the last guild offer, 0 for none). Events that
     // waited replay on them in order, and the rows they change turn dirty.
-    void Load(LikingPolicy::Tuning const& tuning, uint32_t human, std::vector<Row> const& rows, uint32_t offerAt)
+    void Load(LikingPolicy::Tuning const& tuning, uint32_t human, std::vector<Row> const& rows, uint32_t offerAt,
+        std::vector<QuestOffer> const& questOffers = {})
     {
         Human& book = humans[human];
         book.rows.clear();
@@ -67,6 +75,11 @@ public:
             book.rows[row.bot] = Entry{ row.pair, false };
 
         book.guildOfferAt = std::max(book.guildOfferAt, offerAt);
+        for (QuestOffer const& offer : questOffers)
+        {
+            book.questOfferAt[offer.bot] = std::max(book.questOfferAt[offer.bot], offer.at);
+            book.questWindow.push_back(offer.at);
+        }
 
         book.loaded = true;
         std::vector<Waiting> waiting;
@@ -151,8 +164,13 @@ public:
         if (last != book.questOfferAt.end() && !LikingPolicy::OfferCooldownPassed(last->second, now, pairCooldownSeconds))
             return false;
 
-        if (!book.questWindow.TryTake(now, tuning.questOffersPerHour))
+        book.questWindow.erase(std::remove_if(book.questWindow.begin(), book.questWindow.end(),
+                                   [now](uint32_t at) { return now >= at && now - at >= LikingPolicy::SECONDS_PER_HOUR; }),
+            book.questWindow.end());
+        if (book.questWindow.size() >= tuning.questOffersPerHour)
             return false;
+        book.questWindow.push_back(now);
+        book.questDirty.push_back({ human, bot, now });
 
         if (book.questOfferAt.size() >= MAX_PAIR_OFFERS)
         {
@@ -188,6 +206,19 @@ public:
                 entry.dirty = false;
                 out.push_back({ bot, id, entry.pair });
             }
+        }
+        return out;
+    }
+
+    std::vector<QuestOffer> TakeQuestDirty(uint32_t human)
+    {
+        std::vector<QuestOffer> out;
+        for (auto& [id, book] : humans)
+        {
+            if (human != 0 && id != human)
+                continue;
+            out.insert(out.end(), book.questDirty.begin(), book.questDirty.end());
+            book.questDirty.clear();
         }
         return out;
     }
@@ -237,6 +268,9 @@ public:
         for (auto& [id, book] : humans)
         {
             book.rows.erase(bot);
+            book.questOfferAt.erase(bot);
+            book.questDirty.erase(std::remove_if(book.questDirty.begin(), book.questDirty.end(),
+                                      [bot](QuestOffer const& offer) { return offer.bot == bot; }), book.questDirty.end());
             book.waiting.erase(std::remove_if(book.waiting.begin(), book.waiting.end(),
                                    [bot](Waiting const& event) { return event.bot == bot; }),
                 book.waiting.end());
@@ -277,8 +311,8 @@ private:
         uint32_t guildOfferAt = 0;
         bool guildOfferDirty = false;
         LikingPolicy::OfferWindow guildWindow;
-        // Shared-quest offers live in memory only: a restart forgets them, and a human who logs out loses them.
-        LikingPolicy::OfferWindow questWindow;
+        std::vector<uint32_t> questWindow;
+        std::vector<QuestOffer> questDirty;
         std::unordered_map<uint32_t, uint32_t> questOfferAt;
     };
 
@@ -416,6 +450,15 @@ inline std::string OfferReplaceSql(uint32_t human, uint32_t offerAt)
     return buffer;
 }
 
+inline std::string QuestOfferInsertSql(QuestOffer const& offer)
+{
+    char buffer[200];
+    std::snprintf(buffer, sizeof(buffer),
+        "INSERT INTO `playerbots_social_quest_offer` (`player_guid`, `bot_guid`, `offered_at`) VALUES (%u, %u, %u)",
+        unsigned(offer.human), unsigned(offer.bot), unsigned(offer.at));
+    return buffer;
+}
+
 // The cleanup: rows older than retentionDays whose decayed score sits within FORGET_DUST of neutral (the SQL form of
 // LikingPolicy::Forgettable), and offer times older than retentionDays.
 inline std::vector<std::string> RetentionSql(LikingPolicy::Tuning const& tuning, uint32_t now, uint32_t retentionDays)
@@ -439,6 +482,14 @@ inline std::vector<std::string> RetentionSql(LikingPolicy::Tuning const& tuning,
     return statements;
 }
 
+inline std::string QuestRetentionSql(uint32_t now, uint32_t retentionDays, uint32_t cooldownSeconds)
+{
+    uint64_t const span = std::max(uint64_t(retentionDays) * LikingPolicy::SECONDS_PER_DAY,
+        uint64_t(std::max(cooldownSeconds, LikingPolicy::SECONDS_PER_HOUR)));
+    uint32_t const cutoff = now > span ? uint32_t(now - span) : 0;
+    return "DELETE FROM `playerbots_social_quest_offer` WHERE `offered_at` < " + std::to_string(cutoff);
+}
+
 // The removal of one character's rows, as the human and as the bot (a deleted character, the wipe command).
 inline std::vector<std::string> ForgetPlayerSql(uint32_t guid, bool asBotToo)
 {
@@ -448,9 +499,13 @@ inline std::vector<std::string> ForgetPlayerSql(uint32_t guid, bool asBotToo)
     statements.push_back(buffer);
     std::snprintf(buffer, sizeof(buffer), "DELETE FROM `playerbots_social_offer` WHERE `player_guid` = %u", unsigned(guid));
     statements.push_back(buffer);
+    std::snprintf(buffer, sizeof(buffer), "DELETE FROM `playerbots_social_quest_offer` WHERE `player_guid` = %u", unsigned(guid));
+    statements.push_back(buffer);
     if (asBotToo)
     {
         std::snprintf(buffer, sizeof(buffer), "DELETE FROM `playerbots_social_liking` WHERE `bot_guid` = %u", unsigned(guid));
+        statements.push_back(buffer);
+        std::snprintf(buffer, sizeof(buffer), "DELETE FROM `playerbots_social_quest_offer` WHERE `bot_guid` = %u", unsigned(guid));
         statements.push_back(buffer);
     }
     return statements;
