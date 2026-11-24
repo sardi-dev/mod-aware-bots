@@ -49,6 +49,9 @@ namespace BotAuction
     // World thread, every tick from the world update script (after the map threads).
     void OnUpdate(uint32 diff);
 
+    // Map threads record recipe outcomes for the interval summary.
+    void RecordRecipe(uint32 bought, uint32 learned, uint32 budget, uint32 limit);
+
     // World thread. Writes the "[AUCTION] summary" line.
     void LogSummary(char const* why);
 }

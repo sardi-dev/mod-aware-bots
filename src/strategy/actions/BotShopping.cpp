@@ -6,6 +6,12 @@
 #include "BotShopping.h"
 
 #include "BotGuid.h"
+#include "BotAuction.h"
+#include "AuctionVisitPolicy.h"
+#include "RecipePurchasePolicy.h"
+#include "ReservePolicy.h"
+#include "PlayerbotAIConfig.h"
+#include "UseItemAction.h"
 #include "BotMountPolicy.h"
 #include "BotSalePolicy.h"
 #include "BudgetValues.h"
@@ -25,6 +31,7 @@
 #include "Timer.h"
 
 #include <cmath>
+#include <ctime>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -45,6 +52,7 @@ namespace
     std::unordered_map<uint64, CachedVendor> sCache;
 
     std::unordered_map<uint64, CachedVendor> sMountVendorCache;
+
 
     // A mount item: its second spell is the mount it teaches (the first is the learning spell, 55884 on 5.4.8).
     uint32 MountSpellOf(ItemTemplate const* proto)
@@ -186,6 +194,122 @@ bool BotShopping::BuyUpgradesAt(PlayerbotAI* botAI, Player* bot, Creature* vendo
     SF_LOG_INFO("playerbots", "[BUYGEAR] bot=%s level=%u vendor=%u spent=%u money=%u", bot->GetName().c_str(),
                 uint32(bot->getLevel()), vendor->GetEntry(), uint32(moneyBefore - moneyAfter), uint32(moneyAfter));
     return true;
+}
+
+bool BotShopping::BuyRecipesAt(PlayerbotAI* botAI, Player* bot, Creature* vendor)
+{
+    if (!sConfigMgr->GetBoolDefault("AiPlayerbot.RecipeBuying.Enable", false) ||
+        !sRandomPlayerbotMgr->IsRandomBot(bot) ||
+        !AuctionVisitPolicy::NameAllowed(sPlayerbotAIConfig->auctionOnlyBots, bot->GetName()))
+        return false;
+
+    ReservePolicy::Facts facts;
+    facts.level = bot->getLevel();
+    for (uint32 skill : ReservePolicy::CRAFTING_SKILLS)
+        if (bot->HasSkill(skill) && bot->GetSkillValue(skill))
+            ++facts.craftingProfessionCount;
+    VendorItemData const* items = vendor->GetVendorItems();
+    if (!facts.craftingProfessionCount || !items)
+        return false;
+
+    ReservePolicy::Params params;
+    params.goalSharePercent = sPlayerbotAIConfig->auctionReserveGoalSharePercent;
+    params.recipeSharePercent = sPlayerbotAIConfig->auctionReserveRecipeSharePercent;
+    uint64 const money = bot->GetMoney();
+    uint64 budget = ReservePolicy::RecipeBudget(ReservePolicy::ComputeReserve(facts, params, money), money);
+    uint32 const visitLimit = uint32(std::max(0, sConfigMgr->GetIntDefault("AiPlayerbot.RecipeBuying.PerVisit", 1)));
+    uint32 const dayLimit = uint32(std::max(0, sConfigMgr->GetIntDefault("AiPlayerbot.RecipeBuying.PerDay", 3)));
+    uint32 dayCount = sRandomPlayerbotMgr->GetValue(bot, "recipe_daily");
+    uint32 const limit = std::min(visitLimit, dayCount < dayLimit ? dayLimit - dayCount : 0u);
+    std::vector<RecipePurchasePolicy::Offer> offers;
+    for (uint32 slot = 0; slot < items->GetItemCount(); ++slot)
+    {
+        VendorItem const* entry = items->GetItem(slot);
+        if (!entry || entry->Type != ITEM_VENDOR_TYPE_ITEM || entry->ExtendedCost)
+            continue;
+        ItemTemplate const* proto = sObjectMgr->GetItemTemplate(entry->item);
+        // The core's special learning item path casts spell 483 with slot 1 as the taught spell.
+        if (!proto || proto->Class != ITEM_CLASS_RECIPE || proto->Spells[0].SpellId != 483 ||
+            proto->Spells[1].SpellId <= 0 || proto->BuyPrice <= 0 || !sSpellMgr->GetSpellInfo(uint32(proto->Spells[1].SpellId)))
+            continue;
+        RecipePurchasePolicy::Offer offer;
+        offer.item = proto->ItemId;
+        offer.spell = uint32(proto->Spells[1].SpellId);
+        offer.skill = proto->RequiredSkill;
+        offer.requiredSkill = proto->RequiredSkillRank;
+        offer.currentSkill = bot->GetSkillValue(offer.skill);
+        offer.price = uint32(std::floor(proto->BuyPrice * bot->GetReputationPriceDiscount(vendor)));
+        auto const abilities = sSpellMgr->GetSkillLineAbilityMapBounds(offer.spell);
+        bool matchesSkill = false;
+        for (auto it = abilities.first; it != abilities.second; ++it)
+            if (it->second && it->second->skillId == offer.skill)
+                matchesSkill = true;
+        offer.unambiguous = matchesSkill;
+        offer.craftingSkill = ReservePolicy::IsCraftingSkill(offer.skill);
+        offer.known = bot->HasSpell(offer.spell);
+        offer.owned = bot->HasItemCount(offer.item, 1, true);
+        offer.available = (!entry->maxcount || vendor->GetVendorItemCurrentCount(entry) >= proto->BuyCount) &&
+            (!proto->RequiredReputationFaction || uint32(bot->GetReputationRank(proto->RequiredReputationFaction)) >= proto->RequiredReputationRank);
+        offer.goldOnly = entry->IsGoldRequired(proto);
+        offer.usable = bot->CanUseItem(proto) == EQUIP_ERR_OK && !bot->IsNonMeleeSpellCasted(false) &&
+                       botAI->CanCastSpell(483, bot, false);
+        if (RecipePurchasePolicy::Eligible(offer))
+            offers.push_back(offer);
+    }
+    auto const plan = RecipePurchasePolicy::PlanPurchases(offers, budget, limit);
+    std::sort(offers.begin(), offers.end(), [](RecipePurchasePolicy::Offer const& a, RecipePurchasePolicy::Offer const& b) {
+        return a.price != b.price ? a.price < b.price : a.item < b.item;
+    });
+    std::vector<RecipePurchasePolicy::Offer> counted;
+    uint64 remaining = budget;
+    uint32 skippedBudget = 0, skippedLimit = 0;
+    for (auto const& offer : offers)
+    {
+        bool duplicate = false;
+        for (auto const& previous : counted)
+            if (previous.item == offer.item || previous.spell == offer.spell)
+                duplicate = true;
+        if (duplicate) continue;
+        if (counted.size() >= limit) { ++skippedLimit; continue; }
+        if (offer.price > remaining) { ++skippedBudget; continue; }
+        counted.push_back(offer);
+        remaining -= offer.price;
+    }
+    if (skippedBudget || skippedLimit)
+        BotAuction::RecordRecipe(0, 0, skippedBudget, skippedLimit);
+
+    bool bought = false;
+    for (auto const& offer : plan)
+    {
+        if (offer.price > budget || bot->HasSpell(offer.spell) || bot->HasItemCount(offer.item, 1, true))
+            continue;
+        for (uint32 slot = 0; slot < items->GetItemCount(); ++slot)
+        {
+            VendorItem const* entry = items->GetItem(slot);
+            if (!entry || entry->item != offer.item || entry->ExtendedCost || entry->Type != ITEM_VENDOR_TYPE_ITEM)
+                continue;
+            uint64 const before = bot->GetMoney();
+            bot->BuyItemFromVendorSlot(vendor->GetGUID(), slot, offer.item, 1, NULL_BAG, NULL_SLOT);
+            uint64 const after = bot->GetMoney();
+            if (after >= before || !bot->HasItemCount(offer.item, 1))
+                break;
+            budget = before - after >= budget ? 0 : budget - (before - after);
+            time_t const now = std::time(nullptr);
+            uint32 const secondsLeft = uint32(24 * 60 * 60 - now % (24 * 60 * 60));
+            sRandomPlayerbotMgr->SetRecipePurchaseCount(bot, ++dayCount, secondsLeft);
+            Item* item = bot->GetItemByEntry(offer.item);
+            if (item)
+                UseItemAction(botAI, "recipe").UseQuestSourceItem(item);
+            bool const learned = bot->HasSpell(offer.spell);
+            BotAuction::RecordRecipe(1, learned ? 1 : 0, 0, 0);
+            SF_LOG_INFO("playerbots", "[RECIPE] bot=%s vendor=%u item=%u spell=%u price=%llu money=%llu learned=%u",
+                        bot->GetName().c_str(), vendor->GetEntry(), offer.item, offer.spell,
+                        static_cast<unsigned long long>(before - after), static_cast<unsigned long long>(after), uint32(learned));
+            bought = true;
+            break;
+        }
+    }
+    return bought;
 }
 
 bool BotShopping::KnowsMount(Player* bot)

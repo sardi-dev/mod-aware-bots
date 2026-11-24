@@ -1640,6 +1640,11 @@ uint32 RandomPlayerbotMgr::GetValue(Player* bot, std::string const type)
 
 std::string const RandomPlayerbotMgr::GetData(uint32 bot, std::string const type) { return GetEventData(bot, type); }
 
+void RandomPlayerbotMgr::SetRecipePurchaseCount(Player* bot, uint32 count, uint32 secondsLeft)
+{
+    SetEventValue(bot->GetGUIDLow(), "recipe_daily", count, secondsLeft);
+}
+
 void RandomPlayerbotMgr::SetValue(uint32 bot, std::string const type, uint32 value, std::string const data)
 {
     SetEventValue(bot, type, value, sPlayerbotAIConfig->maxRandomBotInWorldTime, data);

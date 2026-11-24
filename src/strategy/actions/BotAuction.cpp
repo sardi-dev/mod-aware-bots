@@ -15,6 +15,7 @@
 #include "BotSalePolicy.h"
 #include "BotShopping.h"
 #include "Creature.h"
+#include "Config.h"
 #include "DatabaseEnv.h"
 #include "DBCStores.h"
 #include "GameObject.h"
@@ -47,6 +48,9 @@
 
 namespace
 {
+    struct RecipeCounters { uint64 bought = 0, learned = 0, budget = 0, limit = 0; };
+    std::mutex sRecipeLock;
+    RecipeCounters sRecipeCounters;
     std::mutex sListingLock;
     std::unordered_set<uint32> sRandomCharacters;
     std::unordered_map<uint32, std::vector<BotAuction::Listing>> sActiveListings;
@@ -1065,7 +1069,7 @@ void BotAuction::OnStartup()
 
 void BotAuction::OnUpdate(uint32 diff)
 {
-    if (!sPlayerbotAIConfig->auctionEnable)
+    if (!sPlayerbotAIConfig->auctionEnable && !sConfigMgr->GetBoolDefault("AiPlayerbot.RecipeBuying.Enable", false))
         return;
 
     auto const tickStart = std::chrono::steady_clock::now();
@@ -1113,23 +1117,40 @@ void BotAuction::OnUpdate(uint32 diff)
         sSummaryStarted = true;
         sLastSummaryMs = now;
     }
-    else if (sTotalsDirty && SummaryDue(getMSTimeDiff(sLastSummaryMs, now), sPlayerbotAIConfig->auctionSummaryMinutes))
+    else if ((sTotalsDirty || [&]() { std::lock_guard<std::mutex> guard(sRecipeLock); return sRecipeCounters.bought || sRecipeCounters.budget || sRecipeCounters.limit; }()) && SummaryDue(getMSTimeDiff(sLastSummaryMs, now), sPlayerbotAIConfig->auctionSummaryMinutes))
         LogSummary("interval");
+}
+
+void BotAuction::RecordRecipe(uint32 bought, uint32 learned, uint32 budget, uint32 limit)
+{
+    std::lock_guard<std::mutex> guard(sRecipeLock);
+    sRecipeCounters.bought += bought;
+    sRecipeCounters.learned += learned;
+    sRecipeCounters.budget += budget;
+    sRecipeCounters.limit += limit;
 }
 
 void BotAuction::LogSummary(char const* why)
 {
-    if (!sPlayerbotAIConfig->auctionEnable)
+    if (!sPlayerbotAIConfig->auctionEnable && !sConfigMgr->GetBoolDefault("AiPlayerbot.RecipeBuying.Enable", false))
         return;
 
+    RecipeCounters recipes;
+    {
+        std::lock_guard<std::mutex> guard(sRecipeLock);
+        recipes = sRecipeCounters;
+        sRecipeCounters = RecipeCounters();
+    }
     sLastSummaryMs = getMSTime();
     sTotalsDirty = false;
-    SF_LOG_INFO("playerbots", "[AUCTION] summary (%s): %s tickAvgMs=%.3f tickMaxMs=%.3f tickSamples=%llu queueAvg=%.2f queueMax=%llu snapshotsAtCap=%llu snapshotsTruncated=%llu listingsOmitted=%llu mailBacklogMax=%llu",
+    SF_LOG_INFO("playerbots", "[AUCTION] summary (%s): %s tickAvgMs=%.3f tickMaxMs=%.3f tickSamples=%llu queueAvg=%.2f queueMax=%llu snapshotsAtCap=%llu snapshotsTruncated=%llu listingsOmitted=%llu mailBacklogMax=%llu recipeBought=%llu recipeLearned=%llu recipeSkippedBudget=%llu recipeSkippedLimit=%llu",
                 why, FormatTotals(sTotals).c_str(), sInterval.tickUs.Average() / 1000.0, double(sInterval.tickUs.max) / 1000.0,
                 static_cast<unsigned long long>(sInterval.tickUs.count), sInterval.queueDepth.Average(),
                 static_cast<unsigned long long>(sInterval.queueDepth.max), static_cast<unsigned long long>(sInterval.snapshotsAtCap),
                 static_cast<unsigned long long>(sInterval.snapshotsTruncated), static_cast<unsigned long long>(sInterval.listingsOmitted),
-                static_cast<unsigned long long>(sInterval.mailBacklogMax));
+                static_cast<unsigned long long>(sInterval.mailBacklogMax), static_cast<unsigned long long>(recipes.bought),
+                static_cast<unsigned long long>(recipes.learned), static_cast<unsigned long long>(recipes.budget),
+                static_cast<unsigned long long>(recipes.limit));
     if (sInterval.snapshotsTruncated)
         SF_LOG_WARN("playerbots", "[AUCTION] snapshot truncation: %llu snapshots, %llu listings omitted in this interval",
                     static_cast<unsigned long long>(sInterval.snapshotsTruncated), static_cast<unsigned long long>(sInterval.listingsOmitted));

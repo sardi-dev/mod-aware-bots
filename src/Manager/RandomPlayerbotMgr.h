@@ -147,6 +147,8 @@ public:
     std::string const GetData(uint32 bot, std::string const type);
     void SetValue(uint32 bot, std::string const type, uint32 value, std::string const data = "");
     void SetValue(Player* bot, std::string const type, uint32 value, std::string const data = "");
+    // Persist a recipe count through the end of its UTC day.
+    void SetRecipePurchaseCount(Player* bot, uint32 count, uint32 secondsLeft);
     void Remove(Player* bot);
     void CheckPlayers();
     float getActivityMod() { return _activityMod; }

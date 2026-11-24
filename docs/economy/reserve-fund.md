@@ -32,9 +32,10 @@ goals   = class trainer spells in the next few levels      only while the bot pa
   leaves none) and never holds more than 700 gold, a little above what all green recipes of one profession cost at skill
   425 (section 3). Ten percent is about the cost of the green recipes the median bot can afford: 4 to 8 gold at levels 40
   and 60. The reserved amount (`Reserve::heldForRecipes`, `RecipeBudget`) is exposed for a recipe purchase: the auction
-  wallet leaves it alone, a recipe purchase may spend it but never gold below the repair reserve. No recipe-buying
-  consumer exists yet (`BotTraining::LearnAffordable` spends "free money for spells", not this reserve); the vendor and
-  later the auction house will use `RecipeBudget`.
+  wallet leaves it alone. Vendor recipe purchases use `RecipeBudget` and never spend below the repair reserve. With
+  `AiPlayerbot.RecipeBuying.Enable = 1`, random crafters at a vendor after gear shopping buy and use eligible recipes,
+  with limits of 1 per visit and 3 per day by default. The auction trial name list also applies. Daily counts persist across
+  restarts and reset at UTC midnight. Auction house recipe purchases are not built.
 - Purchases (bids and buyouts) keep the whole reserve and may spend a quarter of the gold above it per visit
   (`PricePolicy::MakeWallet`, unchanged). A deposit is held back by the repair reserve only: a bot saving for a
   5,000 gold riding skill must still be able to list the goods that pay for it. Deposits and purchases draw on the same
@@ -145,8 +146,8 @@ What it says:
 4. **Class spells when `AutoLearnTrainerSpells` is off** (none today): the table is there; the "train cost" value would
    need to count only the bot's own faction's trainers (it counts every trainer, so a mage's Alliance and Horde portal
    spells add up).
-5. **Recipes** (medium, only if the owner wants it): section 3. The cheapest honest rule is a fixed share, not a
-   reservation of the whole recipe list.
+5. **Auction house recipes**: vendor recipe purchases are built using the fixed share in section 1; auction house
+   recipe purchases are not built.
 6. **A cold weather flying and Pandaria flight licence** (small): 500 gold at level 68 and the level 90 licence are not
    reserved; both need a decision on whether bots should fly in those zones.
 

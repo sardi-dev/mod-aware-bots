@@ -4280,6 +4280,13 @@ AiPlayerbot.Auction.ReserveGoalSharePercent = 75
 # Default: 10
 AiPlayerbot.Auction.ReserveRecipeSharePercent = 10
 
+# Random crafters may buy usable vendor recipes during a vendor trip, using their recipe reserve.
+# OnlyBots below also limits these purchases when it names bots. Daily counts reset at UTC midnight
+# and persist across restarts. Zero for either limit prevents purchases. Default: 0, 1, 3.
+AiPlayerbot.RecipeBuying.Enable = 0
+AiPlayerbot.RecipeBuying.PerVisit = 1
+AiPlayerbot.RecipeBuying.PerDay = 3
+
 # Names of the characters that may use the auction house, separated by commas (names are not case sensitive). Empty lets every
 # random bot of the module go. The soak names a handful of bots here first. A bot that is not a random bot never uses it.
 # Default: empty

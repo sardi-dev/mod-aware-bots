@@ -7,6 +7,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Crafters buy recipes on their vendor trips** (2026-11-24)
+  - Summary: A random bot with a crafting profession that stands at a vendor or repairer on its usual trip may buy one
+    recipe it can learn now (skill high enough, not known, sold for gold), paid from the reserve's recipe share, then
+    learns it by using the item, as a player does. At most one per visit and three per day; one `[RECIPE]` line per
+    purchase and counters in the auction summary. Off by default (`AiPlayerbot.RecipeBuying.*`).
+  - Why: Roadmap 0.3: crafters kept a recipe share in their reserve but never spent it, so their recipe books never grew.
 - **Trade chatter that names real goods** (2026-11-24)
   - Summary: In a capital city with a human in the zone, a random bot with the trader style may name one of its own
     active auction listings with its buyout in the Trade channel, and a gatherer-crafter may name items it can craft

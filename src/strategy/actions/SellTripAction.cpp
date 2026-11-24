@@ -40,7 +40,9 @@ bool SellTripAction::Execute(Event /*event*/)
     // Parity item 4: while at the vendor, a gear upgrade it sells and the bot can pay for is bought too.
     bool const geared = BotShopping::BuyUpgradesAt(botAI, bot, vendor);
 
+    bool const recipes = BotShopping::BuyRecipesAt(botAI, bot, vendor);
+
     // A trip that did none of it is not repeated for a while (a vendor without food, nothing the bot may sell).
-    BotSale::EndTrip(bot, sold || bought || tooled || geared);
+    BotSale::EndTrip(bot, sold || bought || tooled || geared || recipes);
     return true;
 }

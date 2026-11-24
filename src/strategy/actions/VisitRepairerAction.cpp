@@ -64,6 +64,7 @@ bool VisitRepairerAction::Execute(Event /*event*/)
         BotSale::BuyTools(bot, repairer);  // BT-219
         // Parity item 4: and a gear upgrade this vendor sells, out of the gear budget (repairs come first).
         BotShopping::BuyUpgradesAt(botAI, bot, repairer);
+        BotShopping::BuyRecipesAt(botAI, bot, repairer);
     }
 
     std::lock_guard<std::mutex> guard(sLock);
