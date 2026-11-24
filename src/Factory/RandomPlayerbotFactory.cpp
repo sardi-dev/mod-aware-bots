@@ -622,8 +622,9 @@ void RandomPlayerbotFactory::CreateRandomBots()
         std::string password = "";
         if (sPlayerbotAIConfig->randomBotRandomPassword)
         {
-            // The server's seeded generator, not std::rand(), which is seeded from the start time.
-            for (int i = 0; i < 20; i++)
+            // The server's seeded generator, not std::rand(), which is seeded from the start time. The core refuses
+            // passwords longer than MAX_ACCOUNT_STR (16), and a refused account leaves the bot pool short.
+            for (int i = 0; i < 16; i++)
                 password += static_cast<char>(urand('!', 'z'));
         }
         else

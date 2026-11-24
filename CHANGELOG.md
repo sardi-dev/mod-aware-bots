@@ -91,6 +91,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
   - Why: Every feature the module has is named in the README, marked Ready or In development.
 
 ### Fixed
+- **New random bot accounts are created again** (2026-11-24)
+  - Summary: Random bot account passwords are 16 characters, the core's limit, instead of 20.
+  - Why: The core refused every new bot account with a 20-character random password ("Cannot create random bot
+    account ... (result 2)"), so raising the bot count added no bots once the existing accounts were full.
 - **A flag carrier stops chasing targets** (2026-11-24)
   - Summary: In Warsong Gulch and Twin Peaks a bot carrying the enemy flag drops its offensive target, stops attacking
     and chasing, and gets no new target unless the playbook's fight-alone condition holds (exactly one attacker, no
