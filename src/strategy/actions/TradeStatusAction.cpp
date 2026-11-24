@@ -82,6 +82,7 @@
  */
 
 #include "TradeStatusAction.h"
+#include "TradeOutcomePolicy.h"
 #include "LikingStore.h"
 #include "LootEtiquetteActions.h"
 
@@ -92,6 +93,8 @@
 #include "Playerbots.h"
 #include "BotArc.h"
 #include "TradeData.h"
+
+#include <vector>
 
 namespace
 {
@@ -184,6 +187,48 @@ namespace
 {
 // True when either side of the open trade offers gold or an item: an empty window closed with "accept" moved nothing and
 // is no shared moment for the liking score.
+struct TradeSnapshot
+{
+    uint64 money = 0;
+    std::vector<uint64> given;  // items the bot offers
+    std::vector<uint64> taken;  // items the other side offers
+};
+
+TradeSnapshot SnapshotTrade(Player* bot)
+{
+    TradeSnapshot snapshot;
+    snapshot.money = bot->GetMoney();
+    TradeData* mine = bot->GetTradeData();
+    if (!mine)
+        return snapshot;
+
+    for (uint8 slot = 0; slot < TRADE_SLOT_TRADED_COUNT; ++slot)
+    {
+        if (Item* item = mine->GetItem(TradeSlots(slot)))
+            snapshot.given.push_back(item->GetGUID());
+        if (TradeData* theirs = mine->GetTraderData())
+            if (Item* item = theirs->GetItem(TradeSlots(slot)))
+                snapshot.taken.push_back(item->GetGUID());
+    }
+    return snapshot;
+}
+
+bool TradeWentThrough(Player* bot, TradeSnapshot const& before)
+{
+    uint32 givenStillHeld = 0;
+    for (uint64 guid : before.given)
+        if (bot->GetItemByGuid(guid))
+            ++givenStillHeld;
+
+    uint32 takenNowHeld = 0;
+    for (uint64 guid : before.taken)
+        if (bot->GetItemByGuid(guid))
+            ++takenNowHeld;
+
+    return TradeOutcomePolicy::Completed(before.money, bot->GetMoney(), givenStillHeld, uint32(before.given.size()),
+                                         takenNowHeld);
+}
+
 bool TradeMovesSomething(TradeData* mine)
 {
     if (!mine)
@@ -260,6 +305,7 @@ bool TradeStatusAction::Execute(Event event)
         if (CheckTrade())
         {
             bool const movesSomething = TradeMovesSomething(bot->GetTradeData());
+            TradeSnapshot const before = SnapshotTrade(bot);
             bot->GetSession()->HandleAcceptTradeOpcode(accept);
             if (bot->GetTradeData())
             {
@@ -267,8 +313,9 @@ bool TradeStatusAction::Execute(Event event)
                 return false;
             }
 
-            // The bot's accept was the second one and closed the trade: a completed trade with something in it.
-            if (movesSomething)
+            // The bot's accept was the second one and closed the trade. Only a trade that really moved money or items
+            // counts: the core also closes the window when it cancels the trade at the last step (a full bag).
+            if (movesSomething && TradeWentThrough(bot, before))
                 LikingStore::OnTraded(bot, trader);
 
             // 5.4.8: no craft-order system on this fork (see the file header) - AC's

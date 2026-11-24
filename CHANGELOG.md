@@ -13,6 +13,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
   - Why: Every feature the module has is named in the README, marked Ready or In development.
 
 ### Fixed
+- **A cancelled trade no longer raises liking** (2026-11-24)
+  - Summary: After the bot's accept closes a trade, liking is credited only when money or an item really moved (the
+    bot's money, its offered items and the other side's items are compared before and after the accept).
+  - Why: The core also closes the trade window when it cancels the trade at the last step (a full bag), and such a
+    trade was counted as completed.
 - **Shared-quest offer limits survive a logout and a restart** (2026-11-24)
   - Summary: The per-human limit (offers per rolling hour across all bots) and the bot and human pair cooldown were
     kept in memory only; the offers now go to a `playerbots_social_quest_offer` table (created at startup like the other

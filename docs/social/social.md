@@ -275,7 +275,6 @@ history is a separate endpoint (gap 7).
 
 ### 11.4 Known limits
 
-- A trade that the core cancels while the bot's accept closes it (a full bag) is counted as completed; the daily cap bounds it.
 - The tone hook covers whispers, say and party or raid lines, not guild chat or channels.
 - Group time counts every random bot in the human's group on any map; it stops in a battleground group and during a battleground
   queue.
