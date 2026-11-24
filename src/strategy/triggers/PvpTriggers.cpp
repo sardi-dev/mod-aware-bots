@@ -29,6 +29,7 @@
 #include "BgAnyLevelRequests.h"      // #702 P4 (#831): AiPlayerbot.BgAnyLevel (off by default)
 #include "BattlegroundWS.h"
 #include "WsgPlan.h"
+#include "BgFlagView.h"
 #include "GameObject.h"
 #include "Player.h"
 #include "PlayerbotAI.h"
@@ -130,7 +131,10 @@ bool BgQueueDeadTrigger::IsActive()
     return false;
 }
 
-bool PlayerHasFlag::IsActive() { return IsCapturingFlag(bot); }
+bool PlayerHasFlag::IsActive()
+{
+    return IsCapturingFlag(bot) || (WsgPlan::Enabled(bot->GetBattleground()) && BgFlagView::CarriesFlag(bot));
+}
 
 bool PlayerHasFlag::IsCapturingFlag(Player* bot)
 {

@@ -2553,7 +2553,7 @@ bool BGTactics::Execute(Event /*event*/)
         // Replace an active combat chase with the strike objective. Once on a point move, yield
         // while moving so the combat engine still gets opportunities to cast instant spells.
         bool const strikeChasing = bot->GetMotionMaster()->GetCurrentMovementGeneratorType() == CHASE_MOTION_TYPE &&
-                                   WsgPlan::StrikeRunDue(bg, bot);
+                                   (WsgPlan::StrikeRunDue(bg, bot) || WsgCarrier::SuppressTarget(bot));
         if (!strikeChasing && (bot->isMoving() || !bot->IsStopped()))
             return false;
 
@@ -2591,7 +2591,7 @@ bool BGTactics::Execute(Event /*event*/)
         bool const siegeDrive = botAI->IsInVehicle(true) &&
                                 context->GetValue<PositionMap&>("position")->Get()["bg siege"].isSet();
         // A lane detour or strike run walks on in combat, like a carrier.
-        if (inCombat && !siegeDrive && !PlayerHasFlag::IsCapturingFlag(bot) && !WsgPlan::DetourDue(bg, bot) && !WsgPlan::StrikeRunDue(bg, bot))
+        if (inCombat && !siegeDrive && !PlayerHasFlag::IsCapturingFlag(bot) && !(WsgPlan::Enabled(bg) && isCarryingObjective(bg)) && !WsgPlan::DetourDue(bg, bot) && !WsgPlan::StrikeRunDue(bg, bot))
         {
             // bot->GetMotionMaster()->MovementExpired();
             return false;
@@ -2625,6 +2625,7 @@ bool BGTactics::Execute(Event /*event*/)
 
     if (getName() == "check flag")
     {
+        WsgCarrier::DropTarget(botAI, bot);
         if (vFlagIds && atFlag(*vPaths, *vFlagIds))
             return true;
 
@@ -4166,7 +4167,9 @@ bool BGTactics::moveToObjectiveWp(BattleBotPath* const& currentPath, uint32 curr
     // NOTE: can't use IsInCombat() when in vehicle as player is stuck in combat forever while in vehicle (ac bug?)
     bool inCombat = bot->GetVehicle() ? (bool)AI_VALUE(Unit*, "enemy player target") : bot->IsInCombat();
     if (currentPoint == lastPointInPath ||
-        (inCombat && !PlayerHasFlag::IsCapturingFlag(bot) && !WsgPlan::DetourDue(bot->GetBattleground(), bot) &&
+        (inCombat && !PlayerHasFlag::IsCapturingFlag(bot) &&
+         !(WsgPlan::Enabled(bot->GetBattleground()) && isCarryingObjective(bot->GetBattleground())) &&
+         !WsgPlan::DetourDue(bot->GetBattleground(), bot) &&
          !WsgPlan::StrikeRunDue(bot->GetBattleground(), bot)) || !bot->IsAlive())
     {
         // Path is over.

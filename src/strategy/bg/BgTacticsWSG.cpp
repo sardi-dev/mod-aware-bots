@@ -88,6 +88,8 @@ void BGTactics::wsgTick(Battleground* bg)
     // A call-out that is due (the bot's own delay passed, the team's limiter allows it).
     WsgPlan::DeliverCalls(botAI);
 
+    WsgCarrier::DropTarget(botAI, bot);
+
     // A carrier uses its defensive, speed and freedom spells while it runs (owner rule 2026-11-17).
     if (isCarryingObjective(bg))
         WsgCarrier::UseHelpers(botAI, bot, bg);

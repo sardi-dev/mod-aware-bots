@@ -1062,6 +1062,14 @@ constexpr float CARRIER_FIGHT_MIN_HP_CASUAL = 25.0f;
 // A fight that no hit has fed for this long ends: the carrier runs again (the old hold window).
 constexpr std::uint32_t CARRIER_NO_HIT_MS = 8000;
 
+// Targeting permission for a two-flag carrier, independent of its carry plan.
+inline bool CarrierMayFight(std::uint32_t attackers, std::uint32_t enemiesNear, std::uint32_t fightersNear,
+                            float healthPct, Tier tier)
+{
+    float const floor = BotSkillMath::Uses(tier, Tier::GOOD) ? CARRIER_FIGHT_MIN_HP : CARRIER_FIGHT_MIN_HP_CASUAL;
+    return attackers == 1 && enemiesNear <= 1 && fightersNear == 0 && healthPct >= floor;
+}
+
 enum class CarrierChoice : std::uint8_t
 {
     RUN,

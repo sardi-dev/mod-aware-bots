@@ -1,4 +1,5 @@
 #include "EnemyPlayerValue.h"
+#include "WsgCarrier.h"
 
 #include "ArenaPlan.h"
 #include "CombatManager.h"
@@ -61,6 +62,8 @@ bool NearestEnemyPlayersValue::AcceptUnit(Unit* unit)
 
 Unit* EnemyPlayerValue::Calculate()
 {
+    if (WsgCarrier::SuppressTarget(bot))
+        return nullptr;
     bool controllingCannon = false;
     bool controllingVehicle = false;
     bool passenger = false;

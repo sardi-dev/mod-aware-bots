@@ -6,6 +6,7 @@
 #include "AttackActions.h"
 
 #include "AttackersValue.h"
+#include "WsgCarrier.h"
 #include "CreatureAI.h"
 #include "Event.h"
 #include "LastMovementValue.h"
@@ -58,6 +59,8 @@ bool AttackMyTargetAction::Execute(Event event)
 
 bool AttackAction::Attack(Unit* target, bool with_pet /*true*/)
 {
+    if (WsgCarrier::SuppressTarget(bot))
+        return false;
     if (bot->GetMotionMaster()->GetCurrentMovementGeneratorType() == FLIGHT_MOTION_TYPE ||
         bot->HasUnitState(UNIT_STATE_IN_FLIGHT))
     {

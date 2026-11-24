@@ -16,6 +16,9 @@
 #include "GameObject.h"
 #include "Player.h"
 #include "PlayerbotAI.h"
+#include "PlayerbotSpec.h"
+#include "Map.h"
+#include "MotionMaster.h"
 #include "Playerbots.h"
 #include "Timer.h"
 #include "WsgPlan.h"
@@ -234,11 +237,74 @@ CarrierState& Evaluate(Player* bot, Battleground* bg, uint32 nowMs)
 
 namespace WsgCarrier
 {
+bool SuppressTarget(Player* bot)
+{
+    if (!bot || !bot->IsAlive())
+        return false;
+    Battleground* bg = bot->GetBattleground();
+    if (!WsgPlan::Enabled(bg) || !BgFlagView::CarriesFlag(bot))
+        return false;
+    if (!bg->GetBgMap())
+        return true;
+
+    uint32 enemies = 0, fighters = 0;
+    for (auto const& ref : bg->GetBgMap()->GetPlayers())
+    {
+        Player* other = ref.GetSource();
+        if (!other || other == bot || !other->IsInWorld() || !other->IsAlive() || other->IsGameMaster() ||
+            other->GetBattlegroundId() != bg->GetInstanceID())
+            continue;
+        if (other->GetBGTeam() != bot->GetBGTeam())
+        {
+            if (bot->GetDistance(other) <= CARRIER_ALONE_RADIUS)
+                ++enemies;
+        }
+        else if (!PlayerBotSpec::IsHeal(other, true) && bot->GetDistance(other) <= ESCORT_DISTANCE)
+            ++fighters;
+    }
+    return !CarrierMayFight(uint32(bot->getAttackers().size()), enemies, fighters, bot->GetHealthPct(), BotSkill::TierOf(bot));
+}
+
+void DropTarget(PlayerbotAI* botAI, Player* bot)
+{
+    if (!botAI || !SuppressTarget(bot))
+        return;
+    Unit* target = botAI->GetAiObjectContext()->GetValue<Unit*>("current target")->Get();
+    if (target)
+    {
+        static std::unordered_map<uint32, uint32> lastLog;
+        std::lock_guard<std::mutex> guard(g_lock);
+        uint32 const now = getMSTime();
+        uint32& last = lastLog[bot->GetGUIDLow()];
+        if (!last || getMSTimeDiff(last, now) >= 10000)
+        {
+            SF_LOG_DEBUG("playerbots", "[BGWSG] carrier %s drops offensive target %s", bot->GetName().c_str(), target->GetName().c_str());
+            last = now ? now : 1;
+        }
+        botAI->GetAiObjectContext()->GetValue<Unit*>("current target")->Set(nullptr);
+        bot->SetTarget(BotGuid::Empty);
+        bot->SetSelection(BotGuid());
+    }
+    if (target || bot->GetVictim())
+    {
+        bot->AttackStop();
+        bot->InterruptSpell(CURRENT_AUTOREPEAT_SPELL);
+    }
+    if (bot->GetMotionMaster()->GetCurrentMovementGeneratorType() == CHASE_MOTION_TYPE &&
+        bot->GetMotionMaster()->GetMotionSlotType(MOTION_SLOT_CONTROLLED) == NULL_MOTION_TYPE)
+    {
+        bot->GetMotionMaster()->Clear(false);
+        bot->StopMoving();
+    }
+}
+
 bool Fights(Player* bot, Battleground* bg)
 {
     if (!bot || !bg || !CarrierMap(bg) || !bot->IsAlive() || !BgFlagView::CarriesFlag(bot))
         return false;
 
+    if (WsgPlan::Enabled(bg))
+        return !SuppressTarget(bot);
     std::lock_guard<std::mutex> guard(g_lock);
     return CarrierFights(Evaluate(bot, bg, getMSTime()).decision.choice);
 }

@@ -17,6 +17,10 @@ class PlayerbotAI;
 
 namespace WsgCarrier
 {
+    // True only for a two-flag carrier that must not acquire or keep an offensive target.
+    bool SuppressTarget(Player* bot);
+    void DropTarget(PlayerbotAI* botAI, Player* bot);
+
     // True when the carrier stands and fights now (the class rotation runs), false when it runs. The maps of WsgPlan::Enabled; a bot that
     // is not carrying a flag always gets false. Called by the tactics every tick of a carrier that is being attacked.
     bool Fights(Player* bot, Battleground* bg);

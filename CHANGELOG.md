@@ -91,6 +91,13 @@ and this project follows [Semantic Versioning](https://semver.org/).
   - Why: Every feature the module has is named in the README, marked Ready or In development.
 
 ### Fixed
+- **A flag carrier stops chasing targets** (2026-11-24)
+  - Summary: In Warsong Gulch and Twin Peaks a bot carrying the enemy flag drops its offensive target, stops attacking
+    and chasing, and gets no new target unless the playbook's fight-alone condition holds (exactly one attacker, no
+    other enemy within the radius, no fighter of ours near, health 40 percent or more, casual 25). Its run home or its
+    hiding spot is unchanged.
+  - Why: A carrier kept the target it had before the pickup and chased it for 18 minutes with nobody attacking it, so
+    the match ended 0 to 0.
 - **The flag strike group walks through midfield fights to the enemy stand** (2026-11-24)
   - Summary: In Warsong Gulch and Twin Peaks, the taker, backup and escort whose plan is to take the enemy flag keep
     moving while in combat until they are within 30 yd of the enemy stand, as long as they are at 40 percent health or
