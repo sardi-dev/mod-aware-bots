@@ -161,7 +161,6 @@ bool PlayerbotAIConfig::Initialize()
     randomBotAccountPrefix = sConfigMgr->GetStringDefault("AiPlayerbot.RandomBotAccountPrefix", "rndbot");
     randomBotAccountCount = sConfigMgr->GetIntDefault("AiPlayerbot.RandomBotAccountCount", 200);
     randomBotRandomPassword = sConfigMgr->GetBoolDefault("AiPlayerbot.RandomBotRandomPassword", true);
-    randomBotRandomPassword = sConfigMgr->GetBoolDefault("AiPlayerbot.RandomBotRandomPassword", true);
     // Design decision 0025: the higher batch. A count of 0 turns it off (no accounts are created and none log in).
     higherBatchAccountPrefix = sConfigMgr->GetStringDefault("AiPlayerbot.HigherBatchAccountPrefix", "rndbothigh");
     higherBatchAccountCount = sConfigMgr->GetIntDefault("AiPlayerbot.HigherBatchAccountCount", 0);

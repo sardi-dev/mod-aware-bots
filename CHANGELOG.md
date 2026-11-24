@@ -7,6 +7,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- **The random password setting is read once** (2026-11-24)
+  - Summary: `PlayerbotAIConfig.cpp` read `AiPlayerbot.RandomBotRandomPassword` twice in a row; the second read is gone.
+  - Why: Leftover of the release cleanup; harmless, but it reads as a mistake.
 - **Bots dive to a target deep in the water** (2026-11-23)
   - Summary: The surface swim lifted every point of a water path, the destination too, so a bot chasing a mob on a lake bed
     swam above it and could not hit it. The last point now keeps the destination's depth when it lies more than 1.5 yd
