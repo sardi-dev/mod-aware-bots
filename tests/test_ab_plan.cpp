@@ -1242,3 +1242,23 @@ TEST(ab_responders_keep_their_answer_with_the_sticky_bonus)
     all[1].etaMs -= RESPONDER_STICKY_MS;
     CHECK(ChooseResponders(all, NODE_BLACKSMITH, 1, RESPONDER_MAX_ETA_MS, 0)[0] == 2);
 }
+
+TEST(ab_team_intel_requires_a_living_observer_who_can_detect_the_enemy)
+{
+    struct Observer { bool alive; float x; bool visible; };
+    std::vector<Observer> observers;
+    auto seen = [&](bool enemyAlive) {
+        return SeenByTeam(enemyAlive, observers,
+            [](Observer const& o) { return o.alive; },
+            [](Observer const& o) { return SeenFrom(0.0f, 0.0f, o.x, 0.0f); },
+            [](Observer const& o) { return o.visible; });
+    };
+    CHECK(!seen(true));
+    observers = {{false, 1.0f, true}, {true, 71.0f, true}, {true, 10.0f, false}};
+    CHECK(!seen(true));
+    observers.push_back({true, 70.0f, true});
+    CHECK(seen(true));
+    CHECK(!seen(false));
+    CHECK(WithinSight(0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 70.0f));
+    CHECK(!WithinSight(0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 70.0f));
+}

@@ -258,7 +258,6 @@ TEST(ey_raiders_go_only_to_a_base_with_no_defender_seen)
 
 TEST(ey_intel_is_seen_only_and_the_squad_waits_outside_the_circle)
 {
-    CHECK(SeenOnlyIntel(E) && SeenOnlyIntel(BgNodeMap::GILNEAS) && !SeenOnlyIntel(BgNodeMap::ARATHI));
     CHECK_NEAR(GatherDistance(E), 100.0, 0.001);
     CHECK_NEAR(GatherDistance(BgNodeMap::ARATHI), GATHER_DISTANCE, 0.001);
     CHECK(StayAfterCastMs(E) > 60000 && StayAfterCastMs(BgNodeMap::GILNEAS) == CAPTURE_TIME_MS);

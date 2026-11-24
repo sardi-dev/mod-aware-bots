@@ -128,6 +128,7 @@ struct Member
     bool bot = false;
     bool alive = false;
     bool present = false;
+    bool seenByEnemy = false;
     uint8 cls = 0;
     uint8 level = 0;
     bool healer = false;
@@ -764,6 +765,7 @@ void ReadRoster(Record& r, Battleground* bg)
     }
 
     uint8 maxLevel[2] = { 0, 0 };
+    std::vector<Player*> players[2];
     for (auto const& ref : bg->GetBgMap()->GetPlayers())
     {
         Player* p = ref.GetSource();
@@ -781,6 +783,7 @@ void ReadRoster(Record& r, Battleground* bg)
 
         Member& m = found->second;
         ReadMember(m, p, *r.map);
+        players[t].push_back(p);
         ++team.size;
         if (!m.bot)
             ++team.humans;
@@ -788,6 +791,18 @@ void ReadRoster(Record& r, Battleground* bg)
             team.hasHealer = true;
         maxLevel[t] = std::max(maxLevel[t], m.level);
     }
+
+    // Cache visibility once for this refresh, using the same roster for every node.
+    for (uint32 t = 0; t < 2; ++t)
+        for (Player* enemy : players[t])
+        {
+            Member& member = r.team[t].members.at(enemy->GetGUIDLow());
+            member.seenByEnemy = Ab::SeenByTeam(member.alive, players[1 - t],
+                [](Player* observer) { return observer->IsAlive(); },
+                [enemy](Player* observer) { return Ab::WithinSight(enemy->GetPositionX(), enemy->GetPositionY(), enemy->GetPositionZ(),
+                                                                  observer->GetPositionX(), observer->GetPositionY(), observer->GetPositionZ()); },
+                [enemy](Player* observer) { return observer->CanSeeOrDetect(enemy); });
+        }
 
     // Members that left the match are forgotten.
     for (TeamPlan& team : r.team)
@@ -871,35 +886,15 @@ void ReadSituations(Record& r, Battleground* bg, uint32 nowMs)
     }
 }
 
-// Players near each of our banners: the enemy (for the odds and the "inc" calls) and our own. One pass over the roster.
+// Players near each of our banners: seen enemies (for odds and calls) and our own.
 void CountNear(Record& r, PvpMatch::State& match, uint32 nowMs)
 {
-    bool const seenOnly = Ab::SeenOnlyIntel(*r.map);
     for (uint32 t = 0; t < 2; ++t)
     {
         TeamPlan& team = r.team[t];
         TeamPlan& enemy = r.team[1 - t];
         team.cappers.clear();
-
-        // Team intel: the enemies one of our alive players stands within sight of (owner decision 2026-11-18).
-        std::vector<uint32> seen;
-        if (seenOnly)
-            for (auto const& entry : enemy.members)
-            {
-                Member const& e = entry.second;
-                if (!e.alive)
-                    continue;
-                for (auto const& other : team.members)
-                {
-                    Member const& f = other.second;
-                    if (f.alive && Ab::SeenFrom(e.x, e.y, f.x, f.y))
-                    {
-                        seen.push_back(e.guid);
-                        break;
-                    }
-                }
-            }
-        auto const isSeen = [&](Member const& e) { return !seenOnly || std::find(seen.begin(), seen.end(), e.guid) != seen.end(); };
+        auto const isSeen = [](Member const& e) { return e.seenByEnemy; };
 
         for (uint8 n = 0; n < r.map->nodeCount; ++n)
         {
@@ -921,7 +916,6 @@ void CountNear(Record& r, PvpMatch::State& match, uint32 nowMs)
                     ++team.friendNear40[n];
 
             // What the call-outs of the side say is there (a human's line, a scout's), never below what the team sees.
-            if (seenOnly)
             {
                 uint32 const reported = PvpObs::ReportedEnemies(match.Side(t).observations.items, n, nowMs);
                 team.enemyNear40[n] = PvpObs::ReconciledEnemies(team.enemyNear40[n], reported);
@@ -2316,14 +2310,7 @@ void StandFacts(Record const& r, uint32 t, uint32& enemies25, int& odds40)
         float const d = Dist2d(e.x, e.y, stand.x, stand.y);
         if (d > 40.0f)
             continue;
-        bool seen = false;
-        for (auto const& other : team.members)
-            if (other.second.alive && Ab::SeenFrom(e.x, e.y, other.second.x, other.second.y))
-            {
-                seen = true;
-                break;
-            }
-        if (!seen)
+        if (!e.seenByEnemy)
             continue;
         ++enemies40;
         if (d <= 25.0f)

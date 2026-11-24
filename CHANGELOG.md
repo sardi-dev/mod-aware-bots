@@ -32,6 +32,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
   - Why: Every feature the module has is named in the README, marked Ready or In development.
 
 ### Fixed
+- **Arathi Basin bots count only the enemies their team can see** (2026-11-24)
+  - Summary: The Arathi Basin plan counted enemies at each node from the whole roster. Like the other node maps, an
+    enemy now counts only when a living teammate within 70 yd can see or detect it (stealth counts), or a call-out
+    placed it there. The check is cached once per plan refresh for every node.
+  - Why: Bots reacted to enemies nobody on their team could have seen, which a human team cannot do.
 - **Quest retry history survives the quest log** (2026-11-24)
   - Summary: A bot's failure record for a quest is no longer wiped when it accepts the quest again or drops it, only
     when it makes progress or hands the quest in, and quest picks skip a quest that is still backing off. A stalled walk

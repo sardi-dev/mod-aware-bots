@@ -764,8 +764,6 @@ TEST(bfg_decision_points_are_wired_and_fit_the_book)
 
 TEST(bfg_seen_only_intel_counts_what_a_friend_stands_near)
 {
-    CHECK(Ab::SeenOnlyIntel(BgNodeMap::GILNEAS));
-    CHECK(!Ab::SeenOnlyIntel(BgNodeMap::ARATHI));   // Arathi Basin reads the roster until BT-547
     CHECK(Ab::SeenFrom(0.0f, 0.0f, 50.0f, 40.0f));    // 64 yd
     CHECK(!Ab::SeenFrom(0.0f, 0.0f, 60.0f, 60.0f));   // 85 yd
     CHECK(Ab::SeenFrom(0.0f, 0.0f, 70.0f, 0.0f));    // the radius itself

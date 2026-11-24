@@ -1545,20 +1545,33 @@ inline bool GhostWanted(int odds, bool friendHealerAlive, unsigned stealthExpert
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Team intel (owner decision 2026-11-18): the plan counts only the enemies the team has seen. At Battle for Gilneas an enemy counts
-// when an alive friend stands within SEEN_RADIUS of it (a stand-in for sight, no line of sight test) or a call-out placed it there
-// (PvpObs, weighed by confidence). Arathi Basin reads the whole roster until its own change (BT-547).
+// Team intel comes from living observers within sight range and from call-outs.
+// The visibility check is supplied by the caller so game-specific detection stays outside pure logic.
 // ---------------------------------------------------------------------------------------------------------------------
 constexpr float SEEN_RADIUS = 70.0f;
-
-inline bool SeenOnlyIntel(Map const& map)
-{
-    return map.kind == BgNodeMap::Kind::GILNEAS || map.kind == BgNodeMap::Kind::EYE;
-}
 
 inline bool SeenFrom(float enemyX, float enemyY, float friendX, float friendY)
 {
     return Dist2d(enemyX, enemyY, friendX, friendY) <= SEEN_RADIUS;
+}
+
+inline bool WithinSight(float enemyX, float enemyY, float enemyZ, float friendX, float friendY, float friendZ)
+{
+    float const dx = enemyX - friendX;
+    float const dy = enemyY - friendY;
+    float const dz = enemyZ - friendZ;
+    return dx * dx + dy * dy + dz * dz <= SEEN_RADIUS * SEEN_RADIUS;
+}
+
+template <typename Observers, typename Alive, typename InRange, typename CanSee>
+bool SeenByTeam(bool enemyAlive, Observers const& observers, Alive alive, InRange inRange, CanSee canSee)
+{
+    if (!enemyAlive)
+        return false;
+    for (auto const& observer : observers)
+        if (alive(observer) && inRange(observer) && canSee(observer))
+            return true;
+    return false;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
