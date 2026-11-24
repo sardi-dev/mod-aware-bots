@@ -39,8 +39,8 @@ You lead them like players, with marks, roles and party chat, not a page of comm
 | Battlegrounds | | Queue fill, 6 map playbooks, a leader bot, call-outs, a human call-out reader, seen-only enemy intel, a flag strike group that pushes through to the stand; Silvershard Mines, Deepwind Gorge, Tiger's Peak and Temple of Kotmogu rules in the core patches |
 | Arenas | | Named 2v2 bot teams with a rating ladder, a ladder NPC, ladder news, a JSON snapshot, team play |
 | Duels and PvP | | 1v1 engine, enemy awareness, smart interrupts and defensives, fake casts, burst windows, kill windows, class PvP packages |
-| Economy (off) | | Auction selling and buying, mail, a price table from game data, a gold reserve for upkeep, profession materials kept, trial limits, soak measurements, economy tools |
-| Social life (off) | | Liking score per human, playstyles, shared-quest group offers, emote replies, privacy and wipe, trial limits, soak summary by cause |
+| Economy (off) | | Auction selling and buying, mail, a price table from game data, a gold reserve for upkeep, profession materials kept, trial limits, soak measurements, recipe purchases on vendor trips, bank errands that deposit, economy tools |
+| Social life (off) | | Liking score per human, playstyles, shared-quest group offers, emote replies, privacy and wipe, trial limits, soak summary by cause, trade chatter that names real listings and recipes |
 | AI layer (off) | | Player-to-player chat with human timing, openers, honest "I am a bot" answers, battleground strategy, memory, rule-based fallback, budget cap, privacy filter, admin commands |
 | Quality | Unit tests, sidecar and round-trip tests, scenario harness, performance monitor, tagged logs, core gap list, uninstall SQL | |
 
