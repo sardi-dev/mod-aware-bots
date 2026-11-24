@@ -178,7 +178,14 @@ bool BotShopping::BuyUpgradesAt(PlayerbotAI* botAI, Player* bot, Creature* vendo
     uint64 const moneyBefore = bot->GetMoney();
     botAI->DoSpecificAction("buy", Event("supply trip", "vendor gear"), true);
     Forget(bot);
-    return bot->GetMoney() < moneyBefore;
+    uint64 const moneyAfter = bot->GetMoney();
+    if (moneyAfter >= moneyBefore)
+        return false;
+
+    // One line per purchase, so a soak can count how often bots really buy and wear vendor upgrades.
+    SF_LOG_INFO("playerbots", "[BUYGEAR] bot=%s level=%u vendor=%u spent=%u money=%u", bot->GetName().c_str(),
+                uint32(bot->getLevel()), vendor->GetEntry(), uint32(moneyBefore - moneyAfter), uint32(moneyAfter));
+    return true;
 }
 
 bool BotShopping::KnowsMount(Player* bot)

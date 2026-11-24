@@ -6,6 +6,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **A log line for every vendor gear purchase** (2026-11-24)
+  - Summary: `[BUYGEAR] bot=... level=... vendor=... spent=... money=...` after a random bot bought an upgrade on its
+    vendor trip.
+  - Why: The purchase was silent, so nobody could tell how often bots really buy and wear vendor gear.
+
 ### Changed
 - **README and feature list name tonight's dungeon fixes** (2026-11-24)
   - Summary: The README feature table and `docs/FEATURES.md` list the finder's tank level rule, stalled bot runs that
