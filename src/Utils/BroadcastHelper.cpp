@@ -44,6 +44,7 @@
 #include "ObjectMgr.h"
 #include "Playerbots.h"
 #include "PlayerbotTextMgr.h"
+#include "TradeChannelPolicy.h"
 #include "QuestDef.h"
 #include "World.h"
 
@@ -343,12 +344,13 @@ namespace
                 channelName = entry->pattern;
 
             Channel* channel = cMgr->GetChannel(channelName, bot, false);
-            if (!channel || channel->GetName().empty())
+            if (!channel)
                 continue;
 
-            // Checks if the channel name contains the current zone (AC :3050-3057)
-            bool const does_contain = channel->GetName().find(current_str_zone) != std::string::npos;
-            if (chanId != CH_LOOKING_FOR_GROUP && chanId != CH_WORLD_DEFENSE && !does_contain)
+            // City-only Trade uses the localized city suffix, rather than the current zone name.
+            // Channel membership is private in this core; Channel::Say itself refuses a speaker who has not joined.
+            if (!TradeChannelPolicy::Accept(chanId == CH_TRADE, chanId == CH_LOOKING_FOR_GROUP || chanId == CH_WORLD_DEFENSE,
+                                            true, channel->GetName(), current_str_zone))
                 continue;
 
             channel->Say(bot->GetGUID(), msg, Language(LANG_UNIVERSAL));
@@ -369,6 +371,8 @@ bool BroadcastHelper::SayToChannel(Player* bot, std::string const& message, ToCh
             return BroadcastSayToChannel(bot, message, CH_GENERAL);
         case TO_LOOKING_FOR_GROUP:
             return BroadcastSayToChannel(bot, message, CH_LOOKING_FOR_GROUP);
+        case TO_TRADE:
+            return BroadcastSayToChannel(bot, message, CH_TRADE);
         case TO_GUILD:
             return SayToGuild(bot, message);
         default:

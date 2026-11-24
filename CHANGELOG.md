@@ -7,6 +7,13 @@ and this project follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Trade chatter that names real goods** (2026-11-24)
+  - Summary: In a capital city with a human in the zone, a random bot with the trader style may name one of its own
+    active auction listings with its buyout in the Trade channel, and a gatherer-crafter may name items it can craft
+    (known recipes whose product is in the price table). A world-thread cache follows each bot's listings through the
+    auction hooks; at most once per bot per hour and two lines per faction per minute, never in the first 5 minutes
+    after login; counted in the social summary. Off by default (`AiPlayerbot.Social.TradeChatter.*`).
+  - Why: Roadmap 0.3: city chat should reflect what bots really sell and make, not canned lines.
 - **The last soak measurements** (2026-11-24)
   - Summary: The social summary adds the quest-offer pass cost (passes, average and peak ms, candidates scanned) and a
     playstyle census of the loaded random bots; the auction summary adds the largest mailbox backlog a visit found.

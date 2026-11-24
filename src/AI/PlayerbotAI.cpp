@@ -16,6 +16,7 @@
 */
 
 #include "PlayerbotAI.h"
+#include "TradeChatter.h"
 
 #include <mutex>
 #include <set>
@@ -1149,6 +1150,7 @@ void PlayerbotAI::UpdateAI(uint32 elapsed, bool minimal)
 
     // Debug scenario (.botscenario) / probe (.botprobe): see Scenario/BotScenario.cpp. AnyActive()
     // is a single atomic load, so this costs nothing for the common case (no scenario, no probe).
+    TradeChatter::Update(this, bot);
     BotScenario::OnUpdate(this);
 
     // Chat lines of the AI layer that are due (src/AwareAi/AiChat.h). Before the activity gates, so a resting bot still

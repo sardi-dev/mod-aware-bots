@@ -16,6 +16,8 @@
 #define MOD_AWARE_BOTS_BOTAUCTION_H
 
 #include "Define.h"
+#include <ctime>
+#include <vector>
 
 class Player;
 class PlayerbotAI;
@@ -23,6 +25,10 @@ class WorldObject;
 
 namespace BotAuction
 {
+    struct Listing { uint32 auctionId; uint32 itemEntry; uint32 count; uint64 buyout; time_t expiresAt; };
+    std::vector<Listing> ActiveListings(uint32 botGuidLow);
+    void AddRandomCharacter(uint32 guid);
+
     // Map thread. The bot has reached its errand target: the auctioneer (auctionHouse true) or a mailbox. Starts a visit
     // when AuctionVisitPolicy::Check allows it. A bot that fails the check just dwells there as it did before.
     void OnErrandArrival(PlayerbotAI* botAI, Player* bot, WorldObject* target, bool auctionHouse);

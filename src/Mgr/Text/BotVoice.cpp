@@ -208,6 +208,8 @@ namespace
                 return botAI->Say(text);
             case BotVoice::Channel::LFG:
                 return BroadcastHelper::SayToChannel(bot, text, BroadcastHelper::TO_LOOKING_FOR_GROUP);
+            case BotVoice::Channel::TRADE:
+                return BroadcastHelper::SayToChannel(bot, text, BroadcastHelper::TO_TRADE);
             case BotVoice::Channel::GENERAL:
                 return BroadcastHelper::SayToChannel(bot, text, BroadcastHelper::TO_GENERAL);
             case BotVoice::Channel::GUILD:

@@ -16,6 +16,7 @@
 */
 
 #include "RandomPlayerbotMgr.h"
+#include "TradeChatter.h"
 #include "CheckMountStateAction.h"
 #include "ReputationMgr.h"
 #include "StartAreaPolicy.h"
@@ -3044,6 +3045,7 @@ void RandomBotLevelMgrReloadConfig()
 
 void RandomPlayerbotMgr::OnPlayerLogout(Player* player)
 {
+    TradeChatter::Logout(player);
     if (!player)
         return;
 
@@ -3156,6 +3158,7 @@ void RandomPlayerbotMgr::OnBotLoginInternal(Player* const bot)
 
 void RandomPlayerbotMgr::OnPlayerLogin(Player* player)
 {
+    TradeChatter::Login(player);
     // #148: AC RandomBotLevelPlayerScript::OnPlayerLogin (RandomBotLevelMgr.cpp:1144-1149). Runs for every player; for a
     // bot it runs before PlayerbotHolder::OnBotLogin attaches the AI (PlayerbotMgr.cpp HandlePlayerBotLoginCallback), as
     // AC's PLAYERHOOK_ON_LOGIN does (AC HandlePlayerLoginFromDB fires it before PlayerbotHolder::OnBotLogin).

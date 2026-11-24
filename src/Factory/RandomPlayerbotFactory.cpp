@@ -18,6 +18,7 @@
 #include "Helper.h"
 #include "RandomPlayerbotFactory.h"
 #include "RandomPlayerbotMgr.h"
+#include "BotAuction.h"
 
 #include "AccountMgr.h"
 #include "DBCStore.h"
@@ -747,6 +748,7 @@ void RandomPlayerbotFactory::CreateRandomBots()
                     // BT-148, ADR 0016/0017: mark new standard characters for a one-time purse.
                     if (!spec.higherBatch)
                         sRandomPlayerbotMgr->MarkNewStandardBot(lowGuid);
+                    BotAuction::AddRandomCharacter(lowGuid);
                     createdGuids.push_back(lowGuid);
                     bot_creation++;
                 }

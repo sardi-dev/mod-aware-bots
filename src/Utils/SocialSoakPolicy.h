@@ -113,6 +113,7 @@ enum class Counter : uint8_t
     GuildOfferRefused,// a leader the liking gate, the cooldown or the hour cap refused
     OutOfScope,       // a bot left out because it is not on the OnlyBots list
     QuestPairCooldown, QuestRollingLimit, DbWrites,
+    TradeChatterSent, TradeChatterBotCap, TradeChatterChannelCap, TradeChatterFactionCap,
     UpGroupTime, UpDungeonDone, UpTraded, UpDueled, UpGuildTime, UpThanked, UpInsulted, UpKicked, UpLootNinja,
     DownGroupTime, DownDungeonDone, DownTraded, DownDueled, DownGuildTime, DownThanked, DownInsulted, DownKicked, DownLootNinja,
     Count
@@ -142,6 +143,10 @@ inline char const* CounterName(Counter counter)
         case Counter::QuestPairCooldown: return "quest_pair_cooldown";
         case Counter::QuestRollingLimit: return "quest_rolling_limit";
         case Counter::DbWrites: return "db_writes";
+        case Counter::TradeChatterSent: return "trade_chatter_sent";
+        case Counter::TradeChatterBotCap: return "trade_chatter_bot_cap";
+        case Counter::TradeChatterChannelCap: return "trade_chatter_channel_cap";
+        case Counter::TradeChatterFactionCap: return "trade_chatter_faction_cap";
         case Counter::UpGroupTime: return "up_group_time";
         case Counter::UpDungeonDone: return "up_dungeon_done";
         case Counter::UpTraded: return "up_traded";

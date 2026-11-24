@@ -221,6 +221,9 @@ public:
     // switch too), and gesture replies to a human's emotes. Keys AiPlayerbot.Social.QuestOffer.* and .EmoteReplies.*, off.
     bool socialQuestOfferEnable = false;
     QuestOfferPolicy::Tuning socialQuestOffer;
+    bool socialTradeChatterEnable = false;
+    uint32 socialTradeChatterBotMinutes = 60;
+    uint32 socialTradeChatterChannelPerMinute = 2;
     bool socialEmoteRepliesEnable = false;
     EmoteReplyPolicy::Tuning socialEmoteReplies;
     // The soak switches (docs/social/social.md section 13): the bots that may act socially (empty: all), the per-action log

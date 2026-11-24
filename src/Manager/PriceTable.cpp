@@ -25,7 +25,7 @@ namespace
 
 uint32 PriceTable::Load()
 {
-    if (!sPlayerbotAIConfig->auctionEnable || sLoaded.load())
+    if ((!sPlayerbotAIConfig->auctionEnable && !sPlayerbotAIConfig->socialTradeChatterEnable) || sLoaded.load())
         return 0;
 
     uint32 const oldMSTime = getMSTime();

@@ -58,6 +58,10 @@ TEST(social_soak_the_tally_counts_and_prints_every_counter_in_order)
     CHECK(fields.find("emote_reply=2") != std::string::npos);
     CHECK(fields.find("quest_offer=0") != std::string::npos);
     CHECK(fields.find("out_of_scope=0") != std::string::npos);
+    CHECK(fields.find("trade_chatter_sent=0") != std::string::npos);
+    CHECK(fields.find("trade_chatter_bot_cap=0") != std::string::npos);
+    CHECK(fields.find("trade_chatter_channel_cap=0") != std::string::npos);
+    CHECK(fields.find("trade_chatter_faction_cap=0") != std::string::npos);
     CHECK(fields.rfind("liking_up=5", 0) == 0);
 
     Tally other;

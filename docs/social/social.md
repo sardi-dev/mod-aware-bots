@@ -138,17 +138,11 @@ weights (trader: auction and mailbox up, socializer: inn up, gatherer-crafter: b
    (question 2 of the hand-off).
 4. Offers are not hand-outs: no gold, no items, no free levels (design decision 0016, 0017).
 
-## 5. Trade and city chatter (point 13)
+## 5. Trade chatter
 
-- Existing driver: `SuggestWhatToDoAction` (solo random bots) and `BroadcastHelper`. Slice 3 adds `TradeLinePolicy` (pure):
-  a token bucket of `MaxPerHourPerFaction` (6) lines for each faction's city, `RequirePresence` (1): a line is said only while a
-  human of that faction stands in the same city zone, and the sender is picked by playstyle (traders sell lines, gatherer-crafters
-  recipe lines).
-- Sell lines name an item the bot really listed (the economy track's AH listing record), with its listed price; recipe lines
-  name up to `RecipesPerLine` (2) recipes the bot really knows (`BotProfessionProgress`). Without a real listing or recipe a bot
-  says nothing: the generic `suggest_sell` line from bag contents stays as the fallback only while the economy track is off.
-- Rule-based text only (design decision 0029: city and Trade chatter stays off the API). Config: `AiPlayerbot.Social.TradeLines.Enable` (0),
-  `MaxPerHourPerFaction`, `RequirePresence`, `RecipesPerLine`.
+Trade chatter is off by default. Set `AiPlayerbot.Social.TradeChatter.Enable` to 1 to let random bots speak in their capital's Trade channel, subject to `AiPlayerbot.Social.OnlyBots`. A human must be in the same zone, and the bot waits at least five minutes after login. `AiPlayerbot.Social.TradeChatter.BotMinutes` (60) sets the minimum time between a bot's lines; `AiPlayerbot.Social.TradeChatter.ChannelPerMinute` (2) caps lines in a rolling minute for each faction. Zero channel capacity prevents sending.
+
+Traders advertise active auction listings they own, with the stack count and buyout. Gatherer crafters name up to three items they can make with known profession spells and that have a price table entry. The price table loads when either auction visits or trade chatter is enabled. Other playstyles and bots without qualifying goods say nothing. The auction cache starts from the core auction houses and follows add and remove hooks, including sales, expiry and cancellation. Lines use local templates, not the AI sidecar. The social interval summary counts sends and holds by bot and channel caps.
 
 ## 6. Cities (point 17)
 

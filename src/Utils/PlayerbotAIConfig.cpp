@@ -429,6 +429,9 @@ bool PlayerbotAIConfig::Initialize()
         socialQuestOffer.pairCooldownSeconds = uint32(std::max(0, sConfigMgr->GetIntDefault("AiPlayerbot.Social.QuestOffer.PairCooldownHours", int32(offerDefaults.pairCooldownSeconds / 3600)))) * 3600;
         socialQuestOffer.levelTolerance = uint32(std::max(0, sConfigMgr->GetIntDefault("AiPlayerbot.Social.QuestOffer.LevelTolerance", int32(offerDefaults.levelTolerance))));
 
+        socialTradeChatterEnable = sConfigMgr->GetBoolDefault("AiPlayerbot.Social.TradeChatter.Enable", false);
+        socialTradeChatterBotMinutes = uint32(std::max(0, sConfigMgr->GetIntDefault("AiPlayerbot.Social.TradeChatter.BotMinutes", 60)));
+        socialTradeChatterChannelPerMinute = uint32(std::max(0, sConfigMgr->GetIntDefault("AiPlayerbot.Social.TradeChatter.ChannelPerMinute", 2)));
         socialEmoteRepliesEnable = sConfigMgr->GetBoolDefault("AiPlayerbot.Social.EmoteReplies.Enable", false);
         EmoteReplyPolicy::Tuning const emoteDefaults;
         socialEmoteReplies.radiusYards = float(std::min(40, std::max(1, sConfigMgr->GetIntDefault("AiPlayerbot.Social.EmoteReplies.Radius", int32(emoteDefaults.radiusYards)))));

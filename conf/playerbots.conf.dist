@@ -4227,6 +4227,14 @@ AiPlayerbot.Social.EmoteReplies.UntargetedRadius = 8
 AiPlayerbot.Social.EmoteReplies.PerHumanSeconds = 60
 AiPlayerbot.Social.EmoteReplies.UntargetedChance = 35
 
+# Trade chatter in capital cities. Off by default. Only random bots in Social.OnlyBots may speak,
+# and only while a human is in their zone. A bot waits five minutes after login.
+# BotMinutes is the minimum interval per bot; ChannelPerMinute is the rolling limit per faction.
+# A zero ChannelPerMinute disables sends. Listings and recipes must be real and current.
+AiPlayerbot.Social.TradeChatter.Enable = 0
+AiPlayerbot.Social.TradeChatter.BotMinutes = 60
+AiPlayerbot.Social.TradeChatter.ChannelPerMinute = 2
+
 # Soak support for the social parts above (docs/social/social.md section 13). OnlyBots: a comma separated list of bot names;
 # when it is not empty only those bots take part in anything social (liking events and the score they send to the sidecar,
 # group offers, guild offers, emote replies, playstyle weights); every other bot behaves as with the switches off. Names are

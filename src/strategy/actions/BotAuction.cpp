@@ -15,6 +15,7 @@
 #include "BotSalePolicy.h"
 #include "BotShopping.h"
 #include "Creature.h"
+#include "DatabaseEnv.h"
 #include "DBCStores.h"
 #include "GameObject.h"
 #include "Item.h"
@@ -46,6 +47,33 @@
 
 namespace
 {
+    std::mutex sListingLock;
+    std::unordered_set<uint32> sRandomCharacters;
+    std::unordered_map<uint32, std::vector<BotAuction::Listing>> sActiveListings;
+
+    void CacheListing(AuctionEntry const* entry)
+    {
+        if (!entry) return;
+        std::lock_guard<std::mutex> lock(sListingLock);
+        if (!sRandomCharacters.count(entry->owner)) return;
+        auto& entries = sActiveListings[entry->owner];
+        entries.erase(std::remove_if(entries.begin(), entries.end(), [entry](BotAuction::Listing const& item)
+            { return item.auctionId == entry->Id; }), entries.end());
+        entries.push_back({entry->Id, entry->itemEntry, entry->itemCount, entry->buyout, entry->expire_time});
+    }
+
+    void RemoveListing(AuctionEntry const* entry)
+    {
+        if (!entry) return;
+        std::lock_guard<std::mutex> lock(sListingLock);
+        auto found = sActiveListings.find(entry->owner);
+        if (found == sActiveListings.end()) return;
+        auto& entries = found->second;
+        entries.erase(std::remove_if(entries.begin(), entries.end(), [entry](BotAuction::Listing const& item)
+            { return item.auctionId == entry->Id; }), entries.end());
+        if (entries.empty()) sActiveListings.erase(found);
+    }
+
     using namespace AuctionVisitPolicy;
     namespace AuctionMail = AuctionMailPolicy;
 
@@ -480,6 +508,7 @@ namespace
                 visit.money.wallet.committed += outcome.deposit - quote.terms.deposit;
             }
 
+            CacheListing(sAuctionMgr->GetAuctionsMap(auctioneer->getFaction())->GetAuction(outcome.auctionId));
             ++visit.result.listings;
             visit.result.listedCopper += quote.buyout;
             visit.result.depositsCopper += outcome.deposit;
@@ -850,6 +879,9 @@ namespace
     public:
         BotAuctionScript() : AuctionHouseScript("BotAuctionScript") {}
 
+        void OnAuctionAdd(AuctionHouseObject*, AuctionEntry* entry) override { CacheListing(entry); }
+        void OnAuctionRemove(AuctionHouseObject*, AuctionEntry* entry) override { RemoveListing(entry); }
+
         void OnAuctionSuccessful(AuctionHouseObject* /*ah*/, AuctionEntry* entry) override
         {
             if (!sPlayerbotAIConfig->auctionEnable || !entry || !sRandomPlayerbotMgr->IsRandomBot(entry->owner))
@@ -892,6 +924,24 @@ namespace
 // ---------------------------------------------------------------------------------------------------------------
 // Map thread.
 // ---------------------------------------------------------------------------------------------------------------
+void BotAuction::AddRandomCharacter(uint32 guid)
+{
+    std::lock_guard<std::mutex> lock(sListingLock);
+    sRandomCharacters.insert(guid);
+}
+
+std::vector<BotAuction::Listing> BotAuction::ActiveListings(uint32 guid)
+{
+    std::lock_guard<std::mutex> lock(sListingLock);
+    auto found = sActiveListings.find(guid);
+    if (found == sActiveListings.end()) return {};
+    auto entries = found->second;
+    time_t const now = time(nullptr);
+    entries.erase(std::remove_if(entries.begin(), entries.end(), [now](Listing const& item)
+        { return item.expiresAt <= now; }), entries.end());
+    return entries;
+}
+
 void BotAuction::OnErrandArrival(PlayerbotAI* botAI, Player* bot, WorldObject* target, bool auctionHouse)
 {
     if (!sPlayerbotAIConfig->auctionEnable || !target)
@@ -977,6 +1027,30 @@ void BotAuction::OnErrandEnd(Player* bot)
 // ---------------------------------------------------------------------------------------------------------------
 void BotAuction::OnStartup()
 {
+    std::unordered_set<uint32> accounts(sPlayerbotAIConfig->randomBotAccounts.begin(), sPlayerbotAIConfig->randomBotAccounts.end());
+    accounts.insert(sPlayerbotAIConfig->higherBatchAccounts.begin(), sPlayerbotAIConfig->higherBatchAccounts.end());
+    std::string accountList;
+    for (uint32 account : accounts)
+    {
+        if (!accountList.empty()) accountList += ",";
+        accountList += std::to_string(account);
+    }
+    if (!accountList.empty())
+        if (QueryResult result = CharacterDatabase.PQuery("SELECT guid FROM characters WHERE account IN (%s)", accountList.c_str()))
+            do { AddRandomCharacter(result->Fetch()[0].GetUInt32()); } while (result->NextRow());
+
+    // Discover each distinct house through its faction templates, including the neutral house.
+    std::unordered_set<AuctionHouseObject*> houses;
+    houses.insert(sAuctionMgr->GetAuctionsMap(0));
+    for (uint32 i = 0; i < sFactionTemplateStore.GetNumRows(); ++i)
+        if (sFactionTemplateStore.LookupEntry(i)) houses.insert(sAuctionMgr->GetAuctionsMap(i));
+    for (AuctionHouseObject* house : houses)
+    {
+        std::vector<AuctionListing> listings;
+        house->GetListings(listings);
+        for (AuctionListing const& listing : listings)
+            CacheListing(house->GetAuction(listing.id));
+    }
     if (!sPlayerbotAIConfig->auctionEnable)
         return;
 

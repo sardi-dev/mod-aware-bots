@@ -26,7 +26,8 @@ namespace
     bool AnySwitchOn()
     {
         return sPlayerbotAIConfig->socialLikingEnable || sPlayerbotAIConfig->socialPlaystyleEnable ||
-            sPlayerbotAIConfig->socialQuestOfferEnable || sPlayerbotAIConfig->socialEmoteRepliesEnable;
+            sPlayerbotAIConfig->socialQuestOfferEnable || sPlayerbotAIConfig->socialEmoteRepliesEnable ||
+            sPlayerbotAIConfig->socialTradeChatterEnable;
     }
 
     // Called only on the world thread or during shutdown.

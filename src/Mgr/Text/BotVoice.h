@@ -48,6 +48,7 @@ namespace BotVoice
         WHISPER,  // to whisperTo
         SAY,
         LFG,      // the LookingForGroup channel
+        TRADE,    // the Trade channel
         GENERAL,  // the General channel of the bot's zone
         GUILD,    // the bot's guild chat
         BATTLEGROUND  // the battleground group (instance chat: the 5.4.8 client shows it as battleground chat)

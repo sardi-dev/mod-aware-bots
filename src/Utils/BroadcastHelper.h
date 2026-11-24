@@ -40,7 +40,7 @@ public:
         TO_GUILD_RECRUITMENT = 8
     };
 
-    // Says a line in a chat channel the bot is in, now (no chance roll): TO_GENERAL or TO_LOOKING_FOR_GROUP.
+    // Says a line in a chat channel the bot is in, now (no chance roll): TO_GENERAL, TO_TRADE or TO_LOOKING_FOR_GROUP.
     static bool SayToChannel(Player* bot, std::string const& message, ToChannel channel);
 
     static uint8_t GetLocale();
