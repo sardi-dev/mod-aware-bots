@@ -351,8 +351,13 @@ Read in the morning, in the worldserver log (the `playerbots` logger is at info)
 | `\[AUCTION\] .* mail ` | auction mail taken (sold, expired, won) |
 | `\[AUCTION\] sale` and `\[AUCTION\] expire` | what happened to the listings |
 | `\[AUCTION\] .* done` | one line per visit with the totals and why it ended |
-| `\[AUCTION\] summary` | the counters of the whole run |
+| `\[AUCTION\] summary` | run counters and interval measurements |
 | `refused`, `errors [1-9]`, `BID ONLY`, `snapshot truncated`, `Rate.Auction` | what must be zero or explained |
+
+The interval field `mailBacklogMax` is the largest count seen in one visited mailbox before collection, including all
+currently delivered auction mails with money or items, even when already read. It includes won items and refunds as well as
+sale proceeds and returns, excludes mail in transit, and is not a total across bots. A zero can also mean no mailbox was visited.
+No database query is made for this measurement.
 
 Pass when: no `refused: code` line except for stacks that changed; no `BID ONLY`; no `errors` above 0; every listing's unit
 price inside the range the line prints; deposits equal to the policy's (5 percent rate, 12 or 24 hours); every visiting

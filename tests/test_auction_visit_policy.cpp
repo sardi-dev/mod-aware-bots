@@ -257,3 +257,16 @@ TEST(auction_reconciliation_distinguishes_sale_proceeds_and_timeouts)
     CHECK(text.find("saleGoldMailed=0g95s0c") != std::string::npos);
     CHECK(text.find("saleGoldCollected=0g95s0c") != std::string::npos);
 }
+
+TEST(auction_visit_mail_backlog_is_the_interval_maximum)
+{
+    IntervalStats stats;
+    CHECK(stats.mailBacklogMax == 0);
+    stats.MailBacklog(12);
+    stats.MailBacklog(3);
+    CHECK(stats.mailBacklogMax == 12);
+    stats.MailBacklog(17);
+    CHECK(stats.mailBacklogMax == 17);
+    stats = IntervalStats();
+    CHECK(stats.mailBacklogMax == 0);
+}

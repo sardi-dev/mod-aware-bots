@@ -154,3 +154,23 @@ TEST(social_soak_cause_counters_follow_event_order)
     CHECK(SocialSoak::CauseCounter(LikingPolicy::Event::Traded, true) == Counter::UpTraded);
     CHECK(SocialSoak::CauseCounter(LikingPolicy::Event::LootNinja, false) == Counter::DownLootNinja);
 }
+
+TEST(social_soak_pass_measurements_and_style_census)
+{
+    SocialSoak::PassStats stats;
+    CHECK(stats.AverageMs() == 0.0 && stats.AverageCandidates() == 0.0);
+    stats.Add(3, 10);
+    stats.Add(0, 4);
+    CHECK(stats.passes == 2 && stats.AverageMs() == 1.5 && stats.maxMs == 3);
+    CHECK(stats.AverageCandidates() == 7.0 && stats.maxCandidates == 10);
+    SocialSoak::StyleCounts styles{};
+    PlaystylePolicy::Shares shares{};
+    for (auto& share : shares.percent) share = 0;
+    shares.percent[size_t(PlaystylePolicy::Style::Trader)] = 1;
+    SocialSoak::CountStyle(styles, 123, shares);
+    SocialSoak::CountStyle(styles, 456, shares);
+    std::string const line = SocialSoak::SummaryLine(Scope::Parse(""), Tally{}, 1, {}, 0, 0, stats, styles);
+    CHECK(line.find("quest_passes=2 quest_pass_avg_ms=1.50 quest_pass_max_ms=3 quest_candidates_avg=7.00 quest_candidates_max=10") != std::string::npos);
+    CHECK(line.find("style_trader=2") != std::string::npos);
+    CHECK(line.find("style_quester=0") != std::string::npos);
+}

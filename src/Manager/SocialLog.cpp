@@ -9,6 +9,7 @@
 #include "Log.h"
 #include "Player.h"
 #include "PlayerbotAIConfig.h"
+#include "RandomPlayerbotMgr.h"
 
 #include <ctime>
 #include <atomic>
@@ -19,6 +20,7 @@ namespace
 {
     std::array<std::atomic<uint64>, SocialSoak::COUNTER_COUNT> counts{};
     SocialSoak::Tally totals;
+    SocialSoak::PassStats passStats;
     uint32 lastSummaryAt = 0;
 
     bool AnySwitchOn()
@@ -40,8 +42,13 @@ namespace
         }
         uint32 const window = lastSummaryAt && now >= lastSummaryAt ? now - lastSummaryAt : 0;
         auto const tiers = LikingStore::TierCounts(now);
+        SocialSoak::StyleCounts styles{};
+        for (Player* bot : sRandomPlayerbotMgr->GetPlayerBotsSnapshot())
+            if (bot && sRandomPlayerbotMgr->IsRandomBot(bot))
+                SocialSoak::CountStyle(styles, bot->GetGUIDLow(), sPlayerbotAIConfig->socialPlaystyleShares);
         SF_LOG_INFO("playerbots", "%s", SocialSoak::SummaryLine(sPlayerbotAIConfig->socialOnlyBots, interval, window, tiers,
-            totals.Get(SocialSoak::Counter::QuestOffer), totals.Get(SocialSoak::Counter::DbWrites)).c_str());
+            totals.Get(SocialSoak::Counter::QuestOffer), totals.Get(SocialSoak::Counter::DbWrites), passStats, styles).c_str());
+        passStats = SocialSoak::PassStats();
         lastSummaryAt = now;
     }
 }  // namespace
@@ -54,6 +61,11 @@ bool SocialLog::InScope(Player* bot)
 void SocialLog::Count(SocialSoak::Counter counter, uint64 amount)
 {
     counts[size_t(counter)].fetch_add(amount, std::memory_order_relaxed);
+}
+
+void SocialLog::QuestPass(uint32 elapsedMs, uint64 candidates)
+{
+    passStats.Add(elapsedMs, candidates);
 }
 
 void SocialLog::Action(std::string const& line)

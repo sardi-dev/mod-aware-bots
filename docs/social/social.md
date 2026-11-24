@@ -414,7 +414,12 @@ Cause counters count applied moves, including queued events when they replay. `q
 the store, including maintenance and deletes, not synchronous shutdown writes. `total_quest_offer` and `total_db_writes` are
 cumulative since startup. Pair tiers are a snapshot of loaded human rows only, using decayed scores and configured thresholds;
 cold-or-above, stranger-or-above, friendly-or-above and close are inclusive and overlap. The snapshot excludes unloaded and implicit neutral pairs.
-Shared-quest offers are group invites; separate acceptance and decline attribution is not tracked. City and trade chatter caps
+`quest_passes`, `quest_pass_avg_ms`, `quest_pass_max_ms`, `quest_candidates_avg` and `quest_candidates_max` measure
+candidate scans and sorting per eligible human; candidates scanned include every entry in the bot snapshot, before filtering.
+Times use millisecond clock resolution. `style_quester`, `style_gatherer_crafter`, `style_trader`, `style_socializer` and
+`style_pvper` count all loaded random bots at summary time using the configured shares, regardless of social scope or enablement.
+Shared-quest offers are group invites about a quest already in both logs; there is no quest push or quest acceptance to measure.
+Separate group acceptance and decline attribution is not tracked. City and trade chatter caps
 are design items and are not implemented.
 
 ### 13.4 Live checks for the soak

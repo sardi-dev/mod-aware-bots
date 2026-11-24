@@ -7,6 +7,13 @@ and this project follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **The last soak measurements** (2026-11-24)
+  - Summary: The social summary adds the quest-offer pass cost (passes, average and peak ms, candidates scanned) and a
+    playstyle census of the loaded random bots; the auction summary adds the largest mailbox backlog a visit found.
+    Offer acceptance is not measured: the offer invites a human who already has the quest, so no quest push can be
+    observed.
+  - Why: The default-on gates need the pass cost on the world thread, the style mix and the mail backlog, not only
+    event counts.
 - **A diagnostic line for battleground bots that stand still** (2026-11-24)
   - Summary: With `AiPlayerbot.BgIdleLog = 1`, a battleground bot that stays within 10 yd of one spot for more than
     30 s while alive, out of combat and without a stationary duty logs `[BGIDLE]` (at most every 30 s) with its

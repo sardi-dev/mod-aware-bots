@@ -218,6 +218,14 @@ namespace
     // it is.
     void CollectMail(Player* bot, Visit& visit)
     {
+        // Observe the entire delivered auction mailbox before the collection limit is applied.
+        uint64 backlog = 0;
+        for (auto itr = bot->GetMailBegin(); itr != bot->GetMailEnd(); ++itr)
+            if (*itr && (*itr)->messageType == AuctionMail::MESSAGE_TYPE_AUCTION && (*itr)->IsDelivered() &&
+                ((*itr)->money || !(*itr)->items.empty()))
+                ++backlog;
+        sInterval.MailBacklog(backlog);
+
         // The core frees a deleted mail while saving, so work from the ids and look each mail up again.
         std::vector<uint32> ids;
         for (auto itr = bot->GetMailBegin(); itr != bot->GetMailEnd() && ids.size() < MAIL_PER_COLLECTION; ++itr)
@@ -1042,11 +1050,12 @@ void BotAuction::LogSummary(char const* why)
 
     sLastSummaryMs = getMSTime();
     sTotalsDirty = false;
-    SF_LOG_INFO("playerbots", "[AUCTION] summary (%s): %s tickAvgMs=%.3f tickMaxMs=%.3f tickSamples=%llu queueAvg=%.2f queueMax=%llu snapshotsAtCap=%llu snapshotsTruncated=%llu listingsOmitted=%llu",
+    SF_LOG_INFO("playerbots", "[AUCTION] summary (%s): %s tickAvgMs=%.3f tickMaxMs=%.3f tickSamples=%llu queueAvg=%.2f queueMax=%llu snapshotsAtCap=%llu snapshotsTruncated=%llu listingsOmitted=%llu mailBacklogMax=%llu",
                 why, FormatTotals(sTotals).c_str(), sInterval.tickUs.Average() / 1000.0, double(sInterval.tickUs.max) / 1000.0,
                 static_cast<unsigned long long>(sInterval.tickUs.count), sInterval.queueDepth.Average(),
                 static_cast<unsigned long long>(sInterval.queueDepth.max), static_cast<unsigned long long>(sInterval.snapshotsAtCap),
-                static_cast<unsigned long long>(sInterval.snapshotsTruncated), static_cast<unsigned long long>(sInterval.listingsOmitted));
+                static_cast<unsigned long long>(sInterval.snapshotsTruncated), static_cast<unsigned long long>(sInterval.listingsOmitted),
+                static_cast<unsigned long long>(sInterval.mailBacklogMax));
     if (sInterval.snapshotsTruncated)
         SF_LOG_WARN("playerbots", "[AUCTION] snapshot truncation: %llu snapshots, %llu listings omitted in this interval",
                     static_cast<unsigned long long>(sInterval.snapshotsTruncated), static_cast<unsigned long long>(sInterval.listingsOmitted));

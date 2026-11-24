@@ -23,6 +23,9 @@ namespace SocialLog
 
     void Count(SocialSoak::Counter counter, uint64 amount = 1);
 
+    // World thread only: one eligible human candidate scan.
+    void QuestPass(uint32 elapsedMs, uint64 candidates);
+
     // One action line: info level while AiPlayerbot.Social.SoakLog is on, debug level otherwise.
     void Action(std::string const& line);
 

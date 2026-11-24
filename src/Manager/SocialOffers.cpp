@@ -23,6 +23,7 @@
 #include "SocialLog.h"
 #include "SocialSoakPolicy.h"
 #include "WorldSession.h"
+#include "Timer.h"
 
 #include <ctime>
 #include <string>
@@ -183,7 +184,9 @@ void SocialOffers::Update()
         if (quests.empty())
             continue;
 
+        uint32 const passStart = getMSTime();
         std::vector<Candidate> const candidates = CandidatesFor(tuning, human, quests, bots);
+        SocialLog::QuestPass(getMSTimeDiff(passStart, getMSTime()), bots.size());
         bool taken = false;
         for (Candidate const& candidate : candidates)
         {

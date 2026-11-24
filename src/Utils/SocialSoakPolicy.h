@@ -7,6 +7,7 @@
 
 #include "EmoteReplyPolicy.h"
 #include "LikingPolicy.h"
+#include "PlaystylePolicy.h"
 
 #include <algorithm>
 #include <array>
@@ -229,6 +230,28 @@ private:
     std::array<uint64_t, COUNTER_COUNT> counts{};
 };
 
+// World-thread measurements of one candidate scan and ordering pass per eligible human.
+struct PassStats
+{
+    uint64_t passes = 0, totalMs = 0, maxMs = 0, totalCandidates = 0, maxCandidates = 0;
+    void Add(uint32_t ms, uint64_t candidates)
+    {
+        ++passes;
+        totalMs += ms;
+        maxMs = std::max(maxMs, uint64_t(ms));
+        totalCandidates += candidates;
+        maxCandidates = std::max(maxCandidates, candidates);
+    }
+    double AverageMs() const { return passes ? double(totalMs) / passes : 0.0; }
+    double AverageCandidates() const { return passes ? double(totalCandidates) / passes : 0.0; }
+};
+
+using StyleCounts = std::array<uint64_t, PlaystylePolicy::STYLE_COUNT>;
+inline void CountStyle(StyleCounts& counts, uint32_t guid, PlaystylePolicy::Shares const& shares)
+{
+    ++counts[size_t(PlaystylePolicy::StyleFor(guid, shares))];
+}
+
 // Interval 0 turns the periodic line off (the line at shutdown still comes).
 inline bool SummaryDue(uint32_t lastAt, uint32_t now, uint32_t intervalSeconds, bool changed)
 {
@@ -243,13 +266,21 @@ inline bool SummaryDue(uint32_t lastAt, uint32_t now, uint32_t intervalSeconds, 
 // One line of the summary. `windowSeconds` is the time since the previous summary (or the start), the counters are totals since
 // the interval.
 inline std::string SummaryLine(Scope const& scope, Tally const& tally, uint32_t windowSeconds,
-    std::array<uint64_t, 4> const& tiers = {}, uint64_t totalQuestOffers = 0, uint64_t totalDbWrites = 0)
+    std::array<uint64_t, 4> const& tiers = {}, uint64_t totalQuestOffers = 0, uint64_t totalDbWrites = 0,
+    PassStats const& passes = {}, StyleCounts const& styles = {})
 {
+    char metrics[256];
+    std::snprintf(metrics, sizeof(metrics), " quest_passes=%llu quest_pass_avg_ms=%.2f quest_pass_max_ms=%llu quest_candidates_avg=%.2f quest_candidates_max=%llu",
+        (unsigned long long)passes.passes, passes.AverageMs(), (unsigned long long)passes.maxMs, passes.AverageCandidates(),
+        (unsigned long long)passes.maxCandidates);
     return "[SOCIAL] summary (interval): scope=" + scope.Describe() + " window=" + std::to_string(windowSeconds) + "s " +
         tally.Fields() + " pairs_cold_or_above=" + std::to_string(tiers[0]) +
         " pairs_stranger_or_above=" + std::to_string(tiers[1]) + " pairs_friendly_or_above=" + std::to_string(tiers[2]) +
         " pairs_close=" + std::to_string(tiers[3]) + " total_quest_offer=" + std::to_string(totalQuestOffers) +
-        " total_db_writes=" + std::to_string(totalDbWrites);
+        " total_db_writes=" + std::to_string(totalDbWrites) + metrics +
+        " style_quester=" + std::to_string(styles[0]) + " style_gatherer_crafter=" + std::to_string(styles[1]) +
+        " style_trader=" + std::to_string(styles[2]) + " style_socializer=" + std::to_string(styles[3]) +
+        " style_pvper=" + std::to_string(styles[4]);
 }
 
 // Event enums are contiguous in LikingPolicy; keep the counter ranges in the same order.

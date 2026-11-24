@@ -354,6 +354,9 @@ struct IntervalStats
     uint64_t snapshotsAtCap = 0;
     uint64_t snapshotsTruncated = 0;
     uint64_t listingsOmitted = 0;
+    uint64_t mailBacklogMax = 0;
+
+    void MailBacklog(uint64_t count) { mailBacklogMax = std::max(mailBacklogMax, count); }
 
     void Snapshot(uint64_t size, uint64_t limit, uint64_t omitted)
     {
