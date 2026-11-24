@@ -16,6 +16,7 @@
 #include "InstanceScript.h"
 #include "LFGMgr.h"
 #include "LfgFill.h"
+#include "LfgStallPolicy.h"
 #include "Log.h"
 #include "ObjectMgr.h"
 #include "PlayerbotOperations.h"
@@ -445,6 +446,8 @@ namespace
         uint32 leadRequestAt = 0;
         uint32 lootSince = 0;
         bool finished = false;                       // a bot-led party's final boss is dead
+        bool stalled = false;                        // every boss left was skipped with nothing pulled: the run is given up
+        uint32 pulledAt = 0;                         // getMSTime() the leader last pulled a pack or a boss (0: never)
         std::set<uint32> stepsDone;                  // indices into EventSteps() that are over (done, or not possible)
         int32 followStep = -1;                       // the TALK step whose creature the group is walking with
         uint32 followSince = 0;
@@ -654,6 +657,27 @@ namespace
             }
         }
         return best ? best : final;
+    }
+
+    // Every boss the leader can walk to and that is not dead is on the skip list, and no pack was pulled since the first of
+    // those skips (LfgStallPolicy).
+    bool RunIsStalled(std::vector<Boss> const& bosses, RunState const& state, uint32 now, Settings const& s)
+    {
+        uint32 left = 0, skipped = 0, firstSkip = 0;
+        for (Boss const& boss : bosses)
+        {
+            if (state.done.count(boss.entry) || !boss.hasSpawn)
+                continue;
+
+            ++left;
+            auto const itr = state.skipped.find(boss.entry);
+            if (itr == state.skipped.end() || Elapsed(itr->second, now, s.skipMs))
+                continue;
+
+            if (!skipped++ || int32(itr->second - firstSkip) < 0)
+                firstSkip = itr->second;
+        }
+        return LfgStallPolicy::RunStalled(left, skipped, skipped && LfgStallPolicy::PulledSince(state.pulledAt, firstSkip));
     }
 
     // A pack this close ahead and in sight, nearest first; a boss, a civilian and a critter are left alone.
@@ -1086,9 +1110,12 @@ bool LfgCrawlAction::Execute(Event /*event*/)
             for (auto itr = runs.begin(); itr != runs.end();)
                 itr = Elapsed(itr->second.touchedAt, now, FORGET_MS) ? runs.erase(itr) : std::next(itr);
     }
-    // A gap since the last step (a fight, a death) is not a stall.
+    // A gap since the last step (a fight, a death) is not a stall, and the fight counts as a pull for the run's stall rule.
     if (state.touchedAt && Elapsed(state.touchedAt, now, RESUME_GAP_MS))
+    {
         state.progressAt = 0;
+        state.pulledAt = now;
+    }
     state.touchedAt = now;
     struct Store
     {
@@ -1153,6 +1180,7 @@ bool LfgCrawlAction::Execute(Event /*event*/)
             if (Attack(target))
             {
                 state.progressAt = 0;
+                state.pulledAt = now;
                 return true;
             }
         }
@@ -1376,6 +1404,7 @@ bool LfgCrawlAction::Execute(Event /*event*/)
                         if (Attack(target))
                         {
                             state.progressAt = 0;
+                            state.pulledAt = now;
                             return true;
                         }
 
@@ -1504,8 +1533,32 @@ bool LfgCrawlAction::Execute(Event /*event*/)
     Boss const* boss = NextBoss(bot, bosses, state, now, s);
     if (!boss)
     {
-        // Nothing left that can be reached: the final boss is dead (the core ends the run) or out of reach (the run's
-        // time limit does). The leader stands, so nothing wanders off.
+        // Nothing left that can be reached: the final boss is dead (the core ends the run) or out of reach. When every boss
+        // left is skipped and nothing was pulled since the first skip, the run is given up now instead of at its time limit.
+        // The leader stands, so nothing wanders off.
+        if (!state.stalled && RunIsStalled(bosses, state, now, s))
+        {
+            state.stalled = true;
+            SF_LOG_INFO("playerbots", "[CRAWL] %s: every boss left was skipped and nothing was pulled, the run is given up",
+                        bot->GetName().c_str());
+            std::vector<uint32> finderBots;
+            if (kind == RunKind::FINDER)
+            {
+                for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+                {
+                    Player* member = ref->GetSource();
+                    if (member && member->GetSession() && member->GetSession()->IsBot())
+                        finderBots.push_back(member->GetGUIDLow());
+                }
+            }
+            else
+            {
+                // The hand-formed party has no run limit of the finder; its leader calls the run over like a finished one.
+                state.finished = true;
+            }
+
+            LfgFill::NoteRunFailed(dungeonId, finderBots);
+        }
         return true;
     }
 
@@ -1528,7 +1581,10 @@ bool LfgCrawlAction::Execute(Event /*event*/)
             state.eventWaitSince = 0;
             SF_LOG_INFO("playerbots", "[CRAWL] %s pulls the boss %s", bot->GetName().c_str(), boss->name.c_str());
             if (Attack(living))
+            {
+                state.pulledAt = now;
                 return true;
+            }
 
             state.skipped[boss->entry] = now;
             return false;

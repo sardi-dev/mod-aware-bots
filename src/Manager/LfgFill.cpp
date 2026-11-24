@@ -7,6 +7,7 @@
 #include "LfgFill.h"
 #include "LfgFillPolicy.h"
 #include "LfgLeavePolicy.h"
+#include "LfgStallPolicy.h"
 
 #include "BotFactory.h"
 #include "BotSale.h"
@@ -89,6 +90,7 @@ namespace
         uint32 maxIntervalSeconds = 180 * SECONDS_PER_MINUTE;
         uint32 maxRunSeconds = 40 * SECONDS_PER_MINUTE;
         uint32 partyLevelWindow = 5;
+        uint32 failureCooldownHours = 4;
         std::set<uint32> botRunDungeons;
     };
 
@@ -127,8 +129,9 @@ namespace
         s.maxRunSeconds =
             uint32(std::max(5, sConfigMgr->GetIntDefault("AiPlayerbot.LfgBotRuns.MaxRunMinutes", 40))) * SECONDS_PER_MINUTE;
         s.partyLevelWindow = uint32(std::max(0, sConfigMgr->GetIntDefault("AiPlayerbot.LfgBotRuns.LevelWindow", 5)));
+        s.failureCooldownHours = uint32(std::max(0, sConfigMgr->GetIntDefault("AiPlayerbot.LfgBotRuns.FailureCooldownHours", 4)));
         s.botRunDungeons = ParseIdList(sConfigMgr->GetStringDefault(
-            "AiPlayerbot.LfgBotRuns.Dungeons", "4,1,10,16,272,26,273,20,24,8,12,163,6,14,34,36,38,171,170,311,312,209,305"));
+            "AiPlayerbot.LfgBotRuns.Dungeons", "4,1,10,16,26,273,20,24,8,12,163,6,34,36,38,171,170,311,312,209,305"));
         return s;
     }
 
@@ -139,6 +142,7 @@ namespace
     }
 
     std::atomic<uint32> maxRunSeconds{ 40 * SECONDS_PER_MINUTE };
+    std::atomic<uint32> failureCooldownHours{ 4 };
 
     // Dungeons whose run takes longer by design (the Black Morass is a timed defence of 18 rifts, Old Hillsbrad an escort):
     // their runs get this long instead.
@@ -158,6 +162,8 @@ namespace
     std::mutex runLock;
     std::set<uint32> botRunBots;
     std::set<uint32> wrapUpBots;
+    // Dungeons whose bot-led run could not reach a boss, by finder dungeon id: the time (time_t) their rest ends.
+    std::unordered_map<uint32, time_t> failedDungeonUntil;
 
     // World thread only from here.
     struct Party
@@ -1086,7 +1092,7 @@ namespace
         for (uint32 const id : settings.botRunDungeons)
         {
             lfg::LFGDungeonData const* dungeon = sLFGMgr->GetLFGDungeon(id);
-            if (dungeon && dungeon->type == lfg::LFG_TYPE_DUNGEON && !dungeon->seasonal)
+            if (dungeon && dungeon->type == lfg::LFG_TYPE_DUNGEON && !dungeon->seasonal && !LfgFill::DungeonCoolingDown(id))
                 dungeonIds.push_back(id);
         }
         if (dungeonIds.empty())
@@ -1179,6 +1185,29 @@ bool LfgFill::WrapUpRequested(uint32 botLowGuid)
     return wrapUpBots.count(botLowGuid) != 0;
 }
 
+void LfgFill::NoteRunFailed(uint32 dungeonId, std::vector<uint32> const& finderBotLowGuids)
+{
+    uint32 const hours = failureCooldownHours.load(std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> guard(runLock);
+        time_t const until = time_t(LfgStallPolicy::CooldownEnd(time(nullptr), hours));
+        if (until)
+            failedDungeonUntil[dungeonId] = until;
+        // The party's own pass erases these when the bots have left (ManageParties).
+        for (uint32 const low : finderBotLowGuids)
+            wrapUpBots.insert(low);
+    }
+    SF_LOG_INFO("playerbots", "[BOTPARTY] dungeon %u: no boss can be reached, the run wraps up%s", dungeonId,
+                hours ? ", and the dungeon is left alone for a while" : "");
+}
+
+bool LfgFill::DungeonCoolingDown(uint32 dungeonId)
+{
+    std::lock_guard<std::mutex> guard(runLock);
+    auto const itr = failedDungeonUntil.find(dungeonId);
+    return itr != failedDungeonUntil.end() && LfgStallPolicy::CoolingDown(time(nullptr), itr->second);
+}
+
 void LfgFill::Update()
 {
     // The settings are read once a pass, not on every world tick.
@@ -1192,6 +1221,7 @@ void LfgFill::Update()
     intervalSeconds = settings.intervalSeconds;
     EnabledFlag().store(settings.enable, std::memory_order_relaxed);
     maxRunSeconds.store(settings.maxRunSeconds, std::memory_order_relaxed);
+    failureCooldownHours.store(settings.failureCooldownHours, std::memory_order_relaxed);
     if (!settings.enable || !sPlayerbotAIConfig->randomBotJoinLfg)
         return;
 

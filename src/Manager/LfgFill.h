@@ -23,6 +23,8 @@
 
 #include "Define.h"
 
+#include <vector>
+
 namespace LfgFill
 {
     // AiPlayerbot.LfgFill.Enable, read by LfgJoinAction::isUseful (any thread).
@@ -42,6 +44,14 @@ namespace LfgFill
 
     // The run hit its time limit: these bots leave their group (LfgMannersAction).
     bool WrapUpRequested(uint32 botLowGuid);
+
+    // A bot-led run in this dungeon cannot reach any boss left (LfgCrawlAction): the dungeon is not picked for a bot-only
+    // run (finder or hand-formed party) for AiPlayerbot.LfgBotRuns.FailureCooldownHours, and the bots of a finder run
+    // are asked to wrap up like at the time limit (any thread).
+    void NoteRunFailed(uint32 dungeonId, std::vector<uint32> const& finderBotLowGuids);
+
+    // The dungeon failed a bot-led run lately (any thread).
+    bool DungeonCoolingDown(uint32 dungeonId);
 }
 
 #endif

@@ -10,6 +10,7 @@
 #include "Group.h"
 #include "LFGMgr.h"
 #include "LfgActions.h"
+#include "LfgFill.h"
 #include "Log.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
@@ -590,7 +591,7 @@ namespace
             for (uint32 const id : settings.dungeons)
             {
                 lfg::LFGDungeonData const* dungeon = sLFGMgr->GetLFGDungeon(id);
-                if (dungeon && dungeon->type == lfg::LFG_TYPE_DUNGEON && !dungeon->seasonal &&
+                if (dungeon && dungeon->type == lfg::LFG_TYPE_DUNGEON && !dungeon->seasonal && !LfgFill::DungeonCoolingDown(id) &&
                     InLevelRange(*dungeon, leader->getLevel()) && GroupTravel::HasEntrance(dungeon->map) &&
                     !(dungeon->map == STOCKADE_MAP && leader->GetTeamId() == TEAM_HORDE))
                     options.push_back(dungeon);

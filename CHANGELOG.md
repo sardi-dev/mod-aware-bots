@@ -7,6 +7,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- **A bot-led run that cannot reach any boss ends early and its dungeon rests** (2026-11-24)
+  - Summary: When the leader of a bot-only run (finder run or hand-formed party) has skipped every boss still to do for lack of progress, and no pack was pulled or fought since the first of those skips, the crawl gives the run up: the bots of a finder run are asked to wrap up as at the time limit, and a hand-formed party is called over like a finished one. The dungeon is then left out of bot-only runs and of bot party recruiting for `AiPlayerbot.LfgBotRuns.FailureCooldownHours` (default 4, 0 for no rest; kept in memory). The rule is `LfgStallPolicy` (six unit tests). The built-in default of `AiPlayerbot.LfgBotRuns.Dungeons` now matches `conf/playerbots.conf.dist` (no 14, no 272).
+  - Why: Five of six bot-only runs in a day sat out their 40 minutes without reaching a boss: the tank skipped every boss for no progress, waited for the skips to expire and did it again (eight cycles in Gnomeregan, seven skips of the last boss in the Wicked Grotto), tying up five bots for nothing.
 - **Bot-only runs skip Gnomeregan and Maraudon's Wicked Grotto for now** (2026-11-24)
   - Summary: `AiPlayerbot.LfgBotRuns.Dungeons` no longer lists 14 (Gnomeregan) and 272 (Maraudon, Wicked Grotto) by default.
   - Why: Five of six bot-only runs in a day sat out their 40 minutes there without reaching a boss (the tank skipped every
