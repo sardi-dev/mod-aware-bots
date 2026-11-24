@@ -97,7 +97,7 @@ private:
     const Movement::PointsArray SearchForBestPath(float x, float y, float z, float& modified_z, int maxSearchCount = 5, bool normal_only = false, float step = 8.0f);
     static bool PathTypeIsWalkable(PathGenerator const& gen, Unit const* unit);
     // #747 (map 726): lift path points that run along a river bed to just under the liquid surface; true if any moved.
-    bool RaisePathToWaterSurface(Movement::PointsArray& path) const;
+    bool RaisePathToWaterSurface(Movement::PointsArray& path, float destZ) const;
     // #747 (map 726): the bed under a point in liquid (where the navmesh polygons are), else z; inLiquid says which.
     float BedUnderLiquid(float x, float y, float z, bool* inLiquid = nullptr) const;
 };

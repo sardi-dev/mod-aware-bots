@@ -6,6 +6,13 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **Bots dive to a target deep in the water** (2026-11-23)
+  - Summary: The surface swim lifted every point of a water path, the destination too, so a bot chasing a mob on a lake bed
+    swam above it and could not hit it. The last point now keeps the destination's depth when it lies more than 1.5 yd
+    under the surface; a destination near the surface (a swimming leader) is lifted as before.
+  - Why: A melee bot hung on the surface over a Freshwater Eel it could not reach (Lake Everstill).
+
 ## [0.1.0] - 2026-11-23
 
 ### Added

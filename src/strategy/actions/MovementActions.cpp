@@ -683,7 +683,7 @@ bool MovementAction::MoveTo(uint32 mapId, float x, float y, float z, bool idle, 
             // i.e. swim speed while swimming). Dry paths and every other map take the MovePoint route as before.
             Movement::PointsArray const unraised = path;  // #747: to find where the raised (deep-water) part starts
             bool const surfaceSwim = !backwards && SurfaceSwimMap(bot->GetMapId()) && !bot->IsFlying() && path.size() >= 2 &&
-                                     RaisePathToWaterSurface(path);
+                                     RaisePathToWaterSurface(path, z);
             // #747 (owner 2026-10-16, "moving extremely fast" in Twin Peaks): one spline has one speed, picked at launch
             // from the bot's movement flags (MoveSplineInit::Launch SelectSpeedType). A bot on the bank is not swimming,
             // so the whole river/lake crossing ran at its run (mount) speed - ~3x a swimmer - and the probe's JUMP row
@@ -1268,7 +1268,7 @@ bool MovementAction::PathIsWalkable(float x, float y, float z)
 // of the river bed. Point 0 is the bot's own position and is left alone (MoveSplineInit::Launch overwrites it);
 // points on dry land, in shallow water and already near the surface are unchanged. Water-walking bots keep the
 // surface itself. Returns true when at least one point moved, which is what makes MoveTo launch the path itself.
-bool MovementAction::RaisePathToWaterSurface(Movement::PointsArray& path) const
+bool MovementAction::RaisePathToWaterSurface(Movement::PointsArray& path, float destZ) const
 {
     Map const* map = bot->GetMap();
     if (!map)
@@ -1283,6 +1283,16 @@ bool MovementAction::RaisePathToWaterSurface(Movement::PointsArray& path) const
         if (!(status & (LIQUID_MAP_IN_WATER | LIQUID_MAP_UNDER_WATER)))
             continue;
         float const target = liquid.level - below;
+        // A destination deep under the surface (a mob on the lake bed, an underwater quest object) is reached by
+        // diving on the last leg: lifting it too left melee bots swimming over an eel they could not hit (owner,
+        // Lake Everstill, 2026-11-23). A destination near the surface, such as a swimming leader, is lifted as before.
+        if (i + 1 == path.size() && !bot->HasAuraType(SPELL_AURA_WATER_WALK) && liquid.level - destZ > 1.5f &&
+            destZ > p.z - 1.5f)
+        {
+            p.z = destZ;
+            raised = true;
+            continue;
+        }
         if (target - p.z <= 1.5f)
             continue;
         p.z = target;
