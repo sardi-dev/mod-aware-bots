@@ -46,6 +46,7 @@
  */
 
 #include "LfgActions.h"
+#include "LfgTeleportPolicy.h"
 
 #include "Event.h"
 #include "Group.h"
@@ -409,12 +410,9 @@ bool LfgTeleportAction::Execute(Event event)
 
 namespace
 {
-    // Gaps between two asks and the number of asks per group: the core refuses a bot that fights, falls or is dead, so the
-    // next ask is made only when the trigger found the bot free again; the cap keeps a bot whose teleport can never work
-    // (no valid entrance) from asking for the whole run.
-    uint32 const TELEPORT_RETRY_GAP_MS = 15 * IN_MILLISECONDS;
-    uint32 const TELEPORT_RETRY_MAX = 6;
-
+    // The gap between two asks and the number of asks per group are LfgTeleportPolicy's: the core refuses a bot that fights,
+    // falls or is dead, so the next ask is made only when the trigger found the bot free again; a bot whose teleport can never
+    // work (no valid entrance) leaves the group instead of asking for the whole run.
     struct RetryState
     {
         uint64 groupGuid = 0;
@@ -433,21 +431,52 @@ bool LfgTeleportRetryAction::Execute(Event /*event*/)
         return false;
 
     uint32 const now = getMSTime();
+    bool leave = false;
     {
         std::lock_guard<std::mutex> guard(retryLock);
         RetryState& state = retries[bot->GetGUIDLow()];
         if (state.groupGuid != group->GetGUID())
             state = RetryState{ group->GetGUID(), 0, 0 };
 
-        if (state.asks >= TELEPORT_RETRY_MAX || (state.lastMs && getMSTimeDiff(state.lastMs, now) < TELEPORT_RETRY_GAP_MS))
+        LfgTeleportPolicy::Step const step =
+            LfgTeleportPolicy::Next(state.asks, state.lastMs != 0, state.lastMs ? getMSTimeDiff(state.lastMs, now) : 0);
+        if (step == LfgTeleportPolicy::Step::Wait)
             return false;
 
-        state.lastMs = now;
-        ++state.asks;
-        if (retries.size() > 256)
-            for (auto itr = retries.begin(); itr != retries.end();)
-                itr = itr->first != bot->GetGUIDLow() && getMSTimeDiff(itr->second.lastMs, now) > 10 * MINUTE * IN_MILLISECONDS ?
-                    retries.erase(itr) : std::next(itr);
+        if (step == LfgTeleportPolicy::Step::Leave)
+        {
+            leave = true;
+            retries.erase(bot->GetGUIDLow());
+        }
+        else
+        {
+            state.lastMs = now;
+            ++state.asks;
+            if (retries.size() > 256)
+                for (auto itr = retries.begin(); itr != retries.end();)
+                    itr = itr->first != bot->GetGUIDLow() && getMSTimeDiff(itr->second.lastMs, now) > 10 * MINUTE * IN_MILLISECONDS ?
+                        retries.erase(itr) : std::next(itr);
+        }
+    }
+
+    if (leave)
+    {
+        SF_LOG_INFO("playerbots", "[LFGTELE] %s could not get into its finder group's dungeon after %u asks, leaves the group",
+            bot->GetName().c_str(), LfgTeleportPolicy::MAX_ASKS);
+        bool humanInGroup = false;
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+            if (Player* member = ref->GetSource())
+                if (member->GetSession() && !member->GetSession()->IsBot())
+                    humanInGroup = true;
+
+        if (humanInGroup)
+            botAI->SayToParty("I can't get in, sorry, I have to leave the group");
+
+        bot->RemoveFromGroup();
+        botAI->SetMaster(nullptr);
+        botAI->ResetStrategies();
+        botAI->Reset();
+        return true;
     }
 
     SF_LOG_INFO("playerbots", "[LFGTELE] %s is in a finder group's dungeon run but not inside; asks for the teleport again",

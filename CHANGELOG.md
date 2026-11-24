@@ -7,6 +7,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- **A finder bot that cannot get into its dungeon leaves the group after three asks** (2026-11-24)
+  - Summary: `LfgTeleportRetryAction` asks for the dungeon teleport at most three times (it was six) at 15 s apart; the next time the trigger fires the bot says so in party chat when a player is in the group, and leaves the group like a finished run (`LfgTeleportPolicy`, four unit tests).
+  - Why: A bot whose teleport never works (no valid entrance) asked for the teleport again and again, then sat outside the dungeon as a member that never arrived for the rest of the run.
 - **A bot on a ledge above its leader searches further for a way down** (2026-11-24)
   - Summary: In `DungeonUnstuckAction::TryWalkOff`, when the bot has no path at all to its leader and the leader stands more than 10 yd lower, the landing search reads rings out to 30 yd (it was 12), allows a drop up to 30 yd (it was 20), and a landing within 4 yd of the leader's height counts as cheaper than any other (`LedgeWalkOffPolicy::WantsLeaderFloor`, `OnLeaderFloor`, four unit tests). The unseen-only teleport rule is unchanged: the bot still walks off the ledge in view.
   - Why: Two bots stood on a wall walk 40 to 63 yd from their leader, 16 yd above it, for more than five minutes: the 12 yd search found no landing with a path to the leader, and the teleport stays held while a player can see the bot.
