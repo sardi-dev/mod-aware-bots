@@ -27,6 +27,10 @@ namespace BotAuction
     // when AuctionVisitPolicy::Check allows it. A bot that fails the check just dwells there as it did before.
     void OnErrandArrival(PlayerbotAI* botAI, Player* bot, WorldObject* target, bool auctionHouse);
 
+    // Map thread. A bot named in AiPlayerbot.Auction.OnlyBots whose auction visit would be allowed now (enabled, listed, not
+    // human-led, price table loaded, no visit under way, cooldown passed). False while the list is empty: only the soak asks.
+    bool SoakVisitDue(PlayerbotAI* botAI, Player* bot);
+
     // Map thread. True while this bot's visit is queued or working; the errand keeps the bot at the counter until it ends.
     bool VisitWorking(Player* bot);
 

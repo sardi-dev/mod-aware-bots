@@ -212,3 +212,13 @@ TEST(auction_visit_summary_counts_sales_expiries_and_human_buyers)
     CHECK(text.find("salesValue=2g60s0c") != std::string::npos);
     CHECK(text.find("expired=1") != std::string::npos);
 }
+
+TEST(auction_visit_the_soak_wants_a_visit_only_with_a_name_list_and_an_open_gate)
+{
+    CHECK(SoakWantsVisit(true, Gating::Ok));
+    CHECK(!SoakWantsVisit(false, Gating::Ok));
+    CHECK(!SoakWantsVisit(true, Gating::Cooldown));
+    CHECK(!SoakWantsVisit(true, Gating::Busy));
+    CHECK(!SoakWantsVisit(true, Gating::HumanLed));
+    CHECK(!SoakWantsVisit(true, Gating::NotListed));
+}

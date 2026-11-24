@@ -153,6 +153,13 @@ constexpr Gating Check(Gate const& gate)
     return Gating::Ok;
 }
 
+// The soak (AiPlayerbot.Auction.OnlyBots names bots): a named bot that could start a visit now should use the next auction house
+// it stands at. Without a list every bot keeps the ordinary errand odds.
+constexpr bool SoakWantsVisit(bool onlyBotsSet, Gating gating)
+{
+    return onlyBotsSet && gating == Gating::Ok;
+}
+
 constexpr char const* Name(Gating gating)
 {
     switch (gating)

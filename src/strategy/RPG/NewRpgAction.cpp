@@ -50,6 +50,13 @@
 
 bool IsEventQuest(Quest const* quest);
 
+namespace
+{
+// A named soak bot (AiPlayerbot.Auction.OnlyBots) in a town with an auction house in reach whose visit is allowed now; defined
+// with the errand code below.
+bool SoakAuctionVisitReady(PlayerbotAI* botAI, Player* bot);
+}  // namespace
+
 // #134 (flying bots): grind cells keep their z rounded to 50 yd (TravelMgr grind cells). A flying bot flies
 // straight to that z and can end up under the terrain, where every later path fails and it freezes. So a
 // flyer aims at the ground below the cell once it is within path range, and its arrival is measured in 2D.
@@ -375,6 +382,16 @@ bool NewRpgStatusUpdateAction::Execute(Event /*event*/)
             // BT-210: a completed quest whose ender is far away comes before any new pick (new quests included).
             if (StartQuestHandInTrip())
                 return true;
+
+            // The soak bots are few and the odds of an errand at the auction house are small (an idle draw, a town, a
+            // third of the idle errands): a named bot that stands in a town with an auctioneer goes there when its visit is due.
+            if (SoakAuctionVisitReady(botAI, bot))
+            {
+                SF_LOG_INFO("playerbots", "[AUCTION] %s stands in a town with an auction house and its visit is due, goes there",
+                            bot->GetName().c_str());
+                info.ChangeToWanderNpc();
+                return true;
+            }
 
             return RandomChangeStatus({RPG_GO_CAMP, RPG_GO_GRIND, RPG_WANDER_RANDOM, RPG_WANDER_NPC, RPG_DO_QUEST,
                                        RPG_TRAVEL_FLIGHT, RPG_REST, RPG_OUTDOOR_PVP, RPG_DUEL_SPOT, RPG_DO_GATHER});
@@ -925,7 +942,19 @@ ErrandTargets FindErrandTargets(PlayerbotAI* botAI, Player* bot, ErrandPolicy::T
     town.banker = targets[size_t(Errand::Bank)] != nullptr;
     town.auctioneer = targets[size_t(Errand::Auction)] != nullptr;
     town.innkeeper = targets[size_t(Errand::Inn)] != nullptr;
+    town.auctionDue = town.auctioneer && BotAuction::SoakVisitDue(botAI, bot);
     return targets;
+}
+
+bool SoakAuctionVisitReady(PlayerbotAI* botAI, Player* bot)
+{
+    // The cheap gate first: the town scan runs only for a bot whose visit is due.
+    if (!BotAuction::SoakVisitDue(botAI, bot))
+        return false;
+
+    ErrandPolicy::Town town;
+    FindErrandTargets(botAI, bot, town);
+    return town.auctionDue;
 }
 
 // A gesture of a player waiting at a counter.

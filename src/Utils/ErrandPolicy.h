@@ -32,6 +32,8 @@ struct Town
     bool needsVendor = false;   // full bags, or low on food or drink
     bool needsTraining = false; // spells to learn at its class trainer
     bool hasMail = false;
+    // A soak bot (AiPlayerbot.Auction.OnlyBots) whose auction visit is allowed now (BotAuction::SoakVisitDue).
+    bool auctionDue = false;
     bool repairer = false;
     bool vendor = false;
     bool trainer = false;
@@ -58,6 +60,9 @@ constexpr Errand Choose(Town const& town, uint32_t roll)
         return Errand::Trainer;
     if (town.hasMail && town.mailbox)
         return Errand::Mailbox;
+    // The soak must see auction visits: a named bot at an auction house goes to it before it idles anywhere else.
+    if (town.auctionDue && town.auctioneer)
+        return Errand::Auction;
 
     uint32_t const bank = town.banker ? BANK_WEIGHT : 0;
     uint32_t const auction = town.auctioneer ? AUCTION_WEIGHT : 0;

@@ -899,6 +899,28 @@ void BotAuction::OnErrandArrival(PlayerbotAI* botAI, Player* bot, WorldObject* t
     sRequests.push_back(request);
 }
 
+bool BotAuction::SoakVisitDue(PlayerbotAI* botAI, Player* bot)
+{
+    if (!sPlayerbotAIConfig->auctionEnable || sPlayerbotAIConfig->auctionOnlyBots.empty())
+        return false;
+
+    Gate gate;
+    gate.enabled = true;
+    gate.randomBot = sRandomPlayerbotMgr->IsRandomBot(bot);
+    gate.listed = NameAllowed(sPlayerbotAIConfig->auctionOnlyBots, bot->GetName());
+    gate.humanLed = !BotSale::IsEligible(botAI, bot);
+    gate.tableLoaded = PriceTable::Size() > 0;
+    gate.cooldownMinutes = sPlayerbotAIConfig->auctionVisitCooldownMinutes;
+
+    uint32 const now = getMSTime();
+    std::lock_guard<std::mutex> guard(sLock);
+    auto const itr = sBots.find(bot->GetGUID());
+    gate.busy = itr != sBots.end() && itr->second.busy;
+    gate.visitedBefore = itr != sBots.end() && itr->second.visited;
+    gate.msSinceLastVisit = gate.visitedBefore ? getMSTimeDiff(itr->second.lastEndMs, now) : 0;
+    return SoakWantsVisit(true, Check(gate));
+}
+
 bool BotAuction::VisitWorking(Player* bot)
 {
     if (!sPlayerbotAIConfig->auctionEnable)

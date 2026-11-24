@@ -62,3 +62,28 @@ TEST(errand_policy_leaves_town_after_a_few_errands)
     CHECK(!ErrandPolicy::AnotherErrand(2, 30));
     CHECK(!ErrandPolicy::AnotherErrand(3, 0));
 }
+
+TEST(errand_a_soak_bot_whose_visit_is_due_goes_to_the_auction_house_before_idling)
+{
+    ErrandPolicy::Town town;
+    town.auctioneer = true;
+    town.banker = true;
+    town.innkeeper = true;
+    town.mailbox = true;
+    town.auctionDue = true;
+    for (uint32_t roll = 0; roll < 100; ++roll)
+        CHECK(ErrandPolicy::Choose(town, roll) == ErrandPolicy::Errand::Auction);
+
+    // Needs come first, as before.
+    town.needsRepair = true;
+    town.repairer = true;
+    CHECK(ErrandPolicy::Choose(town, 50) == ErrandPolicy::Errand::Repair);
+}
+
+TEST(errand_a_due_visit_needs_an_auctioneer_in_reach)
+{
+    ErrandPolicy::Town town;
+    town.banker = true;
+    town.auctionDue = true;
+    CHECK(ErrandPolicy::Choose(town, 0) == ErrandPolicy::Errand::Bank);
+}
