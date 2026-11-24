@@ -7,6 +7,13 @@ and this project follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Auction soak measurements** (2026-11-24)
+  - Summary: The interval `[AUCTION] summary` line reports auction work per world tick (average and maximum ms),
+    waiting visits, timeouts, snapshots that hit their cap and the listings they left out (one warning per interval at
+    most), and reconciliation totals (deposits returned, sale gold mailed and collected). Bot and human buyouts of a
+    bot's listing now reach the sale counters: the core patch 0010 fires the auction script's sale hook on a buyout.
+  - Why: The economy can only be switched on by default after a soak shows it stays under 100 ms per tick, never
+    truncates its snapshot and loses no gold or items; without these numbers nobody could tell.
 - **A log line for every vendor gear purchase** (2026-11-24)
   - Summary: `[BUYGEAR] bot=... level=... vendor=... spent=... money=...` after a random bot bought an upgrade on its
     vendor trip.

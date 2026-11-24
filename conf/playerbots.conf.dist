@@ -4281,7 +4281,8 @@ AiPlayerbot.Auction.Buy.Enable = 1
 # Default: 3
 AiPlayerbot.Auction.SlicesPerTick = 3
 
-# Minutes between two "[AUCTION] summary" lines (the counters of the whole run). 0 writes none.
+# Minutes between "[AUCTION] summary" lines. Transactions are cumulative; tick, queue and snapshot measurements are per interval.
+# 0 disables interval summaries; a shutdown summary is still written.
 # Default: 30
 AiPlayerbot.Auction.SummaryMinutes = 30
 

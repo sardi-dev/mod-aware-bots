@@ -222,3 +222,38 @@ TEST(auction_visit_the_soak_wants_a_visit_only_with_a_name_list_and_an_open_gate
     CHECK(!SoakWantsVisit(true, Gating::HumanLed));
     CHECK(!SoakWantsVisit(true, Gating::NotListed));
 }
+
+TEST(auction_interval_samples_and_snapshot_boundaries)
+{
+    IntervalStats stats;
+    CHECK(stats.tickUs.Average() == 0.0 && stats.tickUs.max == 0);
+    stats.tickUs.Add(500);
+    stats.tickUs.Add(2500);
+    CHECK(stats.tickUs.count == 2 && stats.tickUs.Average() == 1500.0 && stats.tickUs.max == 2500);
+    stats.Snapshot(4999, 5000, 0);
+    stats.Snapshot(5000, 5000, 0);
+    stats.Snapshot(5000, 5000, 12);
+    stats.Snapshot(5000, 5000, 3);
+    CHECK(stats.snapshotsAtCap == 3 && stats.snapshotsTruncated == 2 && stats.listingsOmitted == 15);
+    stats = IntervalStats();
+    CHECK(stats.tickUs.count == 0 && stats.snapshotsAtCap == 0 && stats.listingsOmitted == 0);
+}
+
+TEST(auction_reconciliation_distinguishes_sale_proceeds_and_timeouts)
+{
+    Totals totals;
+    AddSale(totals, true, 10000, 500, 1000);
+    VisitResult visit;
+    visit.reason = EndReason::TimedOut;
+    visit.depositsCopper = 500;
+    visit.mailMoneyCopper = 12000;
+    visit.saleGoldCollectedCopper = 9500;
+    Add(totals, visit);
+    CHECK(totals.timeouts == 1 && totals.depositsCopper == 500 && totals.depositsReturnedCopper == 500);
+    CHECK(totals.saleGoldMailedCopper == 9500 && totals.saleGoldCollectedCopper == 9500);
+    CHECK(totals.mailMoneyCopper == 12000);
+    std::string const text = FormatTotals(totals);
+    CHECK(text.find("timeouts=1") != std::string::npos);
+    CHECK(text.find("saleGoldMailed=0g95s0c") != std::string::npos);
+    CHECK(text.find("saleGoldCollected=0g95s0c") != std::string::npos);
+}

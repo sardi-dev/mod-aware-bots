@@ -37,6 +37,7 @@
 #include "World.h"
 
 #include <algorithm>
+#include <chrono>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -123,6 +124,7 @@ namespace
 
     std::vector<Visit> sVisits;
     Totals sTotals;
+    IntervalStats sInterval;
     uint32 sLastSummaryMs = 0;
     bool sSummaryStarted = false;
     bool sTotalsDirty = false;
@@ -261,6 +263,8 @@ namespace
                     if (result == MAIL_OK)
                     {
                         visit.result.mailMoneyCopper += money;
+                        if (subject.answer == AuctionMail::ANSWER_SUCCESSFUL)
+                            visit.result.saleGoldCollectedCopper += money;
                         ++visit.result.mailMoneyMails;
                         SF_LOG_INFO("playerbots", "[AUCTION] %s mail %s entry %u [%s] x%u money %s ok", visit.name.c_str(),
                                     AuctionMail::AnswerName(subject.answer), subject.itemEntry, ItemName(subject.itemEntry).c_str(),
@@ -333,8 +337,23 @@ namespace
     {
         std::vector<AuctionListing> listings;
         sAuctionMgr->GetAuctionsMap(auctioneer->getFaction())->GetListings(listings, 0, SNAPSHOT_LIMIT);
-        if (listings.size() >= SNAPSHOT_LIMIT)
-            SF_LOG_WARN("playerbots", "[AUCTION] %s snapshot truncated at %u listings", visit.name.c_str(), uint32(SNAPSHOT_LIMIT));
+        uint64 omitted = 0;
+        if (listings.size() == SNAPSHOT_LIMIT)
+        {
+            // Count the remaining valid listings in bounded pages without retaining them in the snapshot.
+            uint32 afterId = listings.back().id;
+            std::vector<AuctionListing> page;
+            do
+            {
+                page.clear();
+                sAuctionMgr->GetAuctionsMap(auctioneer->getFaction())->GetListings(page, afterId, SNAPSHOT_LIMIT);
+                omitted += page.size();
+                if (!page.empty())
+                    afterId = page.back().id;
+            } while (page.size() == SNAPSHOT_LIMIT);
+        }
+        sInterval.Snapshot(listings.size(), SNAPSHOT_LIMIT, omitted);
+        sTotalsDirty = true;
 
         visit.snapshot.reserve(listings.size());
         uint32 own = 0;
@@ -829,7 +848,7 @@ namespace
                 return;
 
             bool const byHuman = entry->bidder && !sRandomPlayerbotMgr->IsRandomBot(entry->bidder);
-            AddSale(sTotals, byHuman, entry->bid);
+            AddSale(sTotals, byHuman, entry->bid, entry->deposit, entry->GetAuctionCut());
             sTotalsDirty = true;
             std::string owner, bidder;
             sObjectMgr->GetPlayerNameByGUID(MAKE_NEW_GUID(entry->owner, 0, HIGHGUID_PLAYER), owner);
@@ -842,8 +861,14 @@ namespace
 
         void OnAuctionExpire(AuctionHouseObject* /*ah*/, AuctionEntry* entry) override
         {
-            if (!sPlayerbotAIConfig->auctionEnable || !entry || !sRandomPlayerbotMgr->IsRandomBot(entry->owner) || entry->bidder)
+            if (!sPlayerbotAIConfig->auctionEnable || !entry || !sRandomPlayerbotMgr->IsRandomBot(entry->owner))
                 return;
+            // The core also reports a sold listing through this hook when loading expired auctions.
+            if (entry->bidder)
+            {
+                OnAuctionSuccessful(nullptr, entry);
+                return;
+            }
 
             AddExpiry(sTotals);
             sTotalsDirty = true;
@@ -961,6 +986,7 @@ void BotAuction::OnUpdate(uint32 diff)
     if (!sPlayerbotAIConfig->auctionEnable)
         return;
 
+    auto const tickStart = std::chrono::steady_clock::now();
     TakeRequests();
 
     uint32 slices = sPlayerbotAIConfig->auctionSlicesPerTick;
@@ -987,6 +1013,18 @@ void BotAuction::OnUpdate(uint32 diff)
             FinishVisit(visit);
     sVisits.erase(std::remove_if(sVisits.begin(), sVisits.end(), [](Visit const& visit) { return visit.done; }), sVisits.end());
 
+    uint64 queue = 0;
+    for (Visit const& visit : sVisits)
+        if (!visit.waitMs)
+            ++queue;
+    {
+        std::lock_guard<std::mutex> guard(sLock);
+        queue += sRequests.size();
+    }
+    sInterval.queueDepth.Add(queue);
+    sInterval.tickUs.Add(uint64(std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now() - tickStart).count()));
+
     uint32 const now = getMSTime();
     if (!sSummaryStarted)
     {
@@ -1004,7 +1042,15 @@ void BotAuction::LogSummary(char const* why)
 
     sLastSummaryMs = getMSTime();
     sTotalsDirty = false;
-    SF_LOG_INFO("playerbots", "[AUCTION] summary (%s): %s", why, FormatTotals(sTotals).c_str());
+    SF_LOG_INFO("playerbots", "[AUCTION] summary (%s): %s tickAvgMs=%.3f tickMaxMs=%.3f tickSamples=%llu queueAvg=%.2f queueMax=%llu snapshotsAtCap=%llu snapshotsTruncated=%llu listingsOmitted=%llu",
+                why, FormatTotals(sTotals).c_str(), sInterval.tickUs.Average() / 1000.0, double(sInterval.tickUs.max) / 1000.0,
+                static_cast<unsigned long long>(sInterval.tickUs.count), sInterval.queueDepth.Average(),
+                static_cast<unsigned long long>(sInterval.queueDepth.max), static_cast<unsigned long long>(sInterval.snapshotsAtCap),
+                static_cast<unsigned long long>(sInterval.snapshotsTruncated), static_cast<unsigned long long>(sInterval.listingsOmitted));
+    if (sInterval.snapshotsTruncated)
+        SF_LOG_WARN("playerbots", "[AUCTION] snapshot truncation: %llu snapshots, %llu listings omitted in this interval",
+                    static_cast<unsigned long long>(sInterval.snapshotsTruncated), static_cast<unsigned long long>(sInterval.listingsOmitted));
+    sInterval = IntervalStats();
 }
 
 void AddSC_bot_auction()

@@ -34,7 +34,7 @@ index d789db5127..a87f1d69a3 100644
  #include "DatabaseEnv.h"
  #include "DBCStores.h"
  #include "Item.h"
-@@ -346,6 +348,181 @@ bool AuctionHouseMgr::RemoveAItem(uint32 id)
+@@ -346,6 +348,182 @@ bool AuctionHouseMgr::RemoveAItem(uint32 id)
      return true;
  }
  
@@ -197,6 +197,7 @@ index d789db5127..a87f1d69a3 100644
 +        SendAuctionSalePendingMail(auction, trans);
 +        SendAuctionSuccessfulMail(auction, trans);
 +        SendAuctionWonMail(auction, trans);
++        sScriptMgr->OnAuctionSuccessful(auctionHouse, auction);
 +
 +        auction->DeleteFromDB(trans);
 +

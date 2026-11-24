@@ -258,6 +258,10 @@ struct Totals
 {
     uint64_t visits = 0;
     uint64_t mailboxVisits = 0;
+    uint64_t timeouts = 0;
+    uint64_t depositsReturnedCopper = 0;
+    uint64_t saleGoldMailedCopper = 0;
+    uint64_t saleGoldCollectedCopper = 0;
     uint64_t cutShort = 0;          // visits that ended any way but Finished
     uint64_t listings = 0;
     uint64_t listedCopper = 0;      // the buyout value of what was listed
@@ -287,6 +291,7 @@ struct VisitResult
     uint32_t purchases = 0;
     uint64_t purchasedCopper = 0;
     uint64_t mailMoneyCopper = 0;
+    uint64_t saleGoldCollectedCopper = 0;
     uint32_t mailMoneyMails = 0;
     uint32_t mailItems = 0;
     uint32_t mailBlocked = 0;
@@ -295,12 +300,14 @@ struct VisitResult
 };
 
 // One sale or expiry seen by the core's auction script; the seller is a random bot.
-inline void AddSale(Totals& totals, bool boughtByHuman, uint64_t paidCopper)
+inline void AddSale(Totals& totals, bool boughtByHuman, uint64_t paidCopper, uint64_t deposit = 0, uint64_t cut = 0)
 {
     ++totals.sales;
     if (boughtByHuman)
         ++totals.salesToHumans;
     totals.salesCopper += paidCopper;
+    totals.depositsReturnedCopper += deposit;
+    totals.saleGoldMailedCopper += paidCopper + deposit - std::min(paidCopper + deposit, cut);
 }
 
 inline void AddExpiry(Totals& totals) { ++totals.expired; }
@@ -311,6 +318,8 @@ inline void Add(Totals& totals, VisitResult const& visit)
         ++totals.mailboxVisits;
     else
         ++totals.visits;
+    if (visit.reason == EndReason::TimedOut)
+        ++totals.timeouts;
     if (visit.reason != EndReason::Finished)
         ++totals.cutShort;
     totals.listings += visit.listings;
@@ -319,12 +328,44 @@ inline void Add(Totals& totals, VisitResult const& visit)
     totals.purchases += visit.purchases;
     totals.purchasedCopper += visit.purchasedCopper;
     totals.mailMoneyCopper += visit.mailMoneyCopper;
+    totals.saleGoldCollectedCopper += visit.saleGoldCollectedCopper;
     totals.mailMoneyMails += visit.mailMoneyMails;
     totals.mailItems += visit.mailItems;
     totals.mailBlocked += visit.mailBlocked;
     totals.refusals += visit.refusals;
     totals.errors += visit.errors;
 }
+
+// Samples are measured in microseconds to retain sub-millisecond work.
+struct Samples
+{
+    uint64_t count = 0;
+    uint64_t sum = 0;
+    uint64_t max = 0;
+
+    void Add(uint64_t value) { ++count; sum += value; max = std::max(max, value); }
+    double Average() const { return count ? double(sum) / count : 0.0; }
+};
+
+struct IntervalStats
+{
+    Samples tickUs;
+    Samples queueDepth;
+    uint64_t snapshotsAtCap = 0;
+    uint64_t snapshotsTruncated = 0;
+    uint64_t listingsOmitted = 0;
+
+    void Snapshot(uint64_t size, uint64_t limit, uint64_t omitted)
+    {
+        if (size >= limit)
+            ++snapshotsAtCap;
+        if (omitted)
+        {
+            ++snapshotsTruncated;
+            listingsOmitted += omitted;
+        }
+    }
+};
 
 // The summary is due when the interval has passed since the last one and something happened meanwhile.
 constexpr bool SummaryDue(uint64_t msSinceLast, uint32_t intervalMinutes)
@@ -342,9 +383,9 @@ inline std::string FormatTotals(Totals const& t)
 {
     auto const gold = [](uint64_t copper) { return FormatCopper(copper); };
     return "visits=" + std::to_string(t.visits) + " mailbox=" + std::to_string(t.mailboxVisits) + " cutShort=" +
-           std::to_string(t.cutShort) + " listed=" + std::to_string(t.listings) + " listedValue=" + gold(t.listedCopper) +
-           " deposits=" + gold(t.depositsCopper) + " bought=" + std::to_string(t.purchases) + " paid=" + gold(t.purchasedCopper) +
-           " mailGold=" + gold(t.mailMoneyCopper) + " mailSales=" + std::to_string(t.mailMoneyMails) + " mailItems=" +
+           std::to_string(t.cutShort) + " timeouts=" + std::to_string(t.timeouts) + " listed=" + std::to_string(t.listings) + " listedValue=" + gold(t.listedCopper) +
+           " deposits=" + gold(t.depositsCopper) + " depositsReturned=" + gold(t.depositsReturnedCopper) + " bought=" + std::to_string(t.purchases) + " paid=" + gold(t.purchasedCopper) +
+           " saleGoldMailed=" + gold(t.saleGoldMailedCopper) + " saleGoldCollected=" + gold(t.saleGoldCollectedCopper) + " mailGold=" + gold(t.mailMoneyCopper) + " mailSales=" + std::to_string(t.mailMoneyMails) + " mailItems=" +
            std::to_string(t.mailItems) + " mailBlocked=" + std::to_string(t.mailBlocked) + " refused=" + std::to_string(t.refusals) +
            " errors=" + std::to_string(t.errors) + " sales=" + std::to_string(t.sales) + " salesToHumans=" +
            std::to_string(t.salesToHumans) + " salesValue=" + gold(t.salesCopper) + " expired=" + std::to_string(t.expired);
