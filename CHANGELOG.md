@@ -6,6 +6,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **README and feature list name tonight's dungeon fixes** (2026-11-24)
+  - Summary: The README feature table and `docs/FEATURES.md` list the finder's tank level rule, stalled bot runs that
+    end and rest their dungeon, leftover bot groups breaking up, ledge recovery and diving to underwater targets.
+  - Why: Every feature the module has is named in the README, marked Ready or In development.
+
 ### Fixed
 - **The auction soak bots go to the auction house when they stand in a town** (2026-11-24)
   - Summary: While `AiPlayerbot.Auction.OnlyBots` names bots, a named bot whose auction visit is allowed (cooldown passed, not human-led, no visit under way) that is idle in a town with an auctioneer within 200 yd now switches to its town errands (`BotAuction::SoakVisitDue`, logged as `[AUCTION] ... visit is due, goes there`), and the errand choice sends it to the auctioneer before the idle errands (`ErrandPolicy::Town::auctionDue`, `AuctionVisitPolicy::SoakWantsVisit`, three unit tests). Bots that are not named, and every bot while the list is empty, keep the ordinary odds. Nothing is given to a bot: it sells only what it carries and walks there itself.
