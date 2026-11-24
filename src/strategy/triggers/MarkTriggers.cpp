@@ -67,6 +67,18 @@ namespace
         return nullptr;
     }
 
+    // True when a player is in the group (a human session, not a bot).
+    bool GroupHasHumanOnline(Group* group)
+    {
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* member = ref->GetSource();
+            if (member && member->GetSession() && !member->GetSession()->IsBot())
+                return true;
+        }
+        return false;
+    }
+
     // BT-169: a blocker is said once per mark and reason, so a mark that nobody pulls shows why in the log.
     constexpr time_t BLOCKER_LOG_GAP_SECONDS = 20;
 
@@ -100,6 +112,7 @@ bool MarkedTargetReadyTrigger::IsActive()
     if (waitingMark != target->GetGUID())
     {
         waitingMark = target->GetGUID();
+        unreachableSince = 0;
         waitingSince = 0;
         announced = false;
         lastBlockerLog = 0;
@@ -122,8 +135,22 @@ bool MarkedTargetReadyTrigger::IsActive()
         NoteBlocker(target, "the mark is out of reach and out of sight", "", true);
         waitingSince = 0;
         readySince = 0;
+        // A group with no player in it never comes to a mark this far away: the mark is dropped after a while.
+        time_t const unreachableNow = time(nullptr);
+        if (!unreachableSince)
+            unreachableSince = unreachableNow;
+        if (MarkPullPolicy::StaleMark(long(unreachableSince), long(unreachableNow), GroupHasHumanOnline(group)))
+        {
+            for (uint8 icon = 0; icon < TARGETICONCOUNT; ++icon)
+                if (group->GetTargetIcon(icon) == target->GetGUID())
+                    group->SetTargetIcon(icon, bot->GetGUID(), ObjectGuid(uint64(0)), 0);
+            SF_LOG_INFO("playerbots", "[MARKPULL] %s drops the mark %u: out of reach for %ld s and no player is in the group",
+                        bot->GetName().c_str(), target->GetEntry(), long(unreachableNow - unreachableSince));
+            unreachableSince = 0;
+        }
         return false;
     }
+    unreachableSince = 0;
 
     time_t const now = time(nullptr);
     // BT-290: the healer's sight is clocked on its own, not only while it is the first blocker, so the healer's walk and

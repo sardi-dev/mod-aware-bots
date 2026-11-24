@@ -187,3 +187,11 @@ TEST(mark_pull_blind_mark_in_range_walks_to_the_leader_after_15_seconds)
     CHECK(BLIND_MARK_WALK_AFTER_SECONDS > LEADER_WALK_AFTER_SECONDS);
     CHECK(BLIND_LEADER_NEAR_YARDS < LEADER_NEAR_YARDS);
 }
+
+TEST(mark_pull_a_mark_out_of_reach_for_five_minutes_is_dropped_when_no_player_is_in_the_group)
+{
+    CHECK(!MarkPullPolicy::StaleMark(0, 5000, false));
+    CHECK(!MarkPullPolicy::StaleMark(1000, 1000 + MarkPullPolicy::STALE_MARK_SECONDS - 1, false));
+    CHECK(MarkPullPolicy::StaleMark(1000, 1000 + MarkPullPolicy::STALE_MARK_SECONDS, false));
+    CHECK(!MarkPullPolicy::StaleMark(1000, 1000 + 10 * MarkPullPolicy::STALE_MARK_SECONDS, true));
+}

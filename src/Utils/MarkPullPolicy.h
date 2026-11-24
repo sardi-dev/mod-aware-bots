@@ -166,6 +166,13 @@ constexpr bool SightWaivedFor(TankSightState const& state, unsigned long long ma
 {
     return state.waived && state.markGuid == markGuid;
 }
+// A mark that stays out of reach and out of sight for this long, in a group with no player in it, is dropped: nobody will ever
+// come to it (a saved bot group whose leader teleported away logged the same wait 74 times in hours).
+constexpr long STALE_MARK_SECONDS = 300;
+constexpr bool StaleMark(long unreachableSince, long now, bool humanInGroup)
+{
+    return !humanInGroup && unreachableSince != 0 && now - unreachableSince >= STALE_MARK_SECONDS;
+}
 constexpr bool EndPullForDefence(bool pullActive, bool memberAttacked)
 {
     return pullActive && memberAttacked;

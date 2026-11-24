@@ -59,6 +59,7 @@
 #include "LikingStore.h"
 #include "SocialOffers.h"
 #include "BotBreak.h"
+#include "BotGroupSweep.h"
 #include "BotLfm.h"
 #include "LfgAnyLevelRequests.h"  // #702: any-level LFG requests for LfgJoinAction (off by default)
 #include "LfgFill.h"
@@ -203,6 +204,9 @@ void RandomPlayerbotMgr::UpdateAIInternal(uint32 elapsed, bool /*minimal*/)
         // Breaks and log-offs (BotBreak.h).
         BotBreak::Update();
     }
+
+    // Members of a group of random bots whose leader has long been gone leave it (BotGroupSweep.h).
+    BotGroupSweep::Update();
 
     // Guilds: random bots found, fill and tend guilds on a timer (BotGuilds.h).
     BotGuilds::Update();

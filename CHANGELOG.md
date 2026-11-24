@@ -7,6 +7,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- **A saved bot group with no player and no leader in reach is left** (2026-11-24)
+  - Summary: New `BotGroupSweep` (a pass every 30 s on the world thread): in a group of random bots with no player in it that is no finder, battleground or raid group and no party `BotLfm` gathers, a member whose leader has been offline, on another map, or over `AiPlayerbot.StaleGroups.ApartYards` (default 1500) away for `AiPlayerbot.StaleGroups.ApartMinutes` (default 5) leaves the group, logged as `[STALEGROUP]`; `AiPlayerbot.StaleGroups.Enable = 0` turns it off. The same tank that waited on a group mark now drops it (the target icon is cleared) once it has been out of reach and out of sight for five minutes and no player is in the group (`MarkPullPolicy::StaleMark`, `StaleGroupPolicy`, five unit tests).
+  - Why: Three bots stayed in one saved group for days: the leader teleported to a random spot (a member may not), the members logged distances of 3000 to 4700 yd for hours, and the tank logged "waits: the mark is out of reach and out of sight" 74 times.
 - **A finder bot that cannot get into its dungeon leaves the group after three asks** (2026-11-24)
   - Summary: `LfgTeleportRetryAction` asks for the dungeon teleport at most three times (it was six) at 15 s apart; the next time the trigger fires the bot says so in party chat when a player is in the group, and leaves the group like a finished run (`LfgTeleportPolicy`, four unit tests).
   - Why: A bot whose teleport never works (no valid entrance) asked for the teleport again and again, then sat outside the dungeon as a member that never arrived for the rest of the run.

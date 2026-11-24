@@ -56,6 +56,8 @@ private:
     time_t lastBlockerLog = 0;
     // BT-181: since when the group is ready for this mark while it is not fighting yet.
     time_t readySince = 0;
+    // Since when the current mark is out of reach and out of sight (MarkPullPolicy::StaleMark).
+    time_t unreachableSince = 0;
     bool const bodyPull;
 };
 

@@ -264,6 +264,16 @@ AiPlayerbot.BotLfm.MaxPosts = 4
 # Origination (305), the Vortex Pinnacle (311) and the Lost City of the Tol'vir (312) need AiPlayerbot.LfgCrawl.EventSteps = 1.
 AiPlayerbot.BotLfm.Dungeons = "4,1,10,16,272,26,273,20,24,8,12,163,6,14,34,36,38,171,170,311,312,209,305"
 
+# Stale bot groups (BotGroupSweep): in a group of random bots with no player in it (not a finder, battleground or raid group,
+# no party BotLfm is gathering), a member whose leader has been offline, on another map, or more than ApartYards away on the
+# same map for ApartMinutes leaves the group. A leader may teleport to a random spot, a member may not, so a saved bot group
+# used to leave its members walking after a leader thousands of yards away for hours. The same wait also drops a group mark
+# that has been out of reach and out of sight for five minutes while no player is in the group (the tank waited on it forever).
+# Default: 1 / 5 / 1500
+AiPlayerbot.StaleGroups.Enable = 1
+AiPlayerbot.StaleGroups.ApartMinutes = 5
+AiPlayerbot.StaleGroups.ApartYards = 1500
+
 # Breaks, like a player's (BotBreak). AFK on a random bot now means a real break: the CPU-saving AFK flag of idle bots is
 # gone (idle ticks still save the CPU). A solo bot sometimes sits down for SoloMinMinutes to SoloMaxMinutes at an inn, in
 # a city or (SoloOutdoors) at a quiet spot with nothing hostile near, flagged AFK with an auto-reply; it may say a short
