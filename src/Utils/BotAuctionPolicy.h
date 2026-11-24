@@ -167,6 +167,7 @@ struct StackFacts
 {
     uint32_t entry = 0;
     uint32_t count = 0;
+    uint32_t banked = 0;
 
     // The protections as BotSale::SelectItemsToSell fills them. usableFoodOrDrink means "the bot keeps this kind" before
     // the keep cap: this policy applies the cap across all stacks of the entry, in bag order. facts.professionMaterial is
@@ -268,7 +269,8 @@ inline std::vector<Listing> SelectListings(std::vector<StackFacts> const& stacks
     for (uint32_t i = 0; i < stacks.size(); ++i)
     {
         StackFacts const& stack = stacks[i];
-        uint32_t& kept = keptByEntry[stack.entry];
+        auto const inserted = keptByEntry.emplace(stack.entry, stack.banked);
+        uint32_t& kept = inserted.first->second;
         uint32_t keptAfter = kept;
         bool const listable = IsListable(stack, kept, keptAfter);
         kept = keptAfter;

@@ -4595,3 +4595,8 @@ AiPlayerbot.ArenaChat.Enable = 1
 AiPlayerbot.ArenaChat.LadderGapMinutes = 15
 AiPlayerbot.ArenaChat.TeamGapMinutes = 45
 AiPlayerbot.ArenaChat.PerDay = 12
+
+# Bank errands: random bots may store retained materials and other protected valuables at a banker.
+# OnlyBots uses AiPlayerbot.Auction.OnlyBots. MaxMoves is clamped to 0 through 50.
+AiPlayerbot.BankErrands.Enable = 0
+AiPlayerbot.BankErrands.MaxMoves = 8

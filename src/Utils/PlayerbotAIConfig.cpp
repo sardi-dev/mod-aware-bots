@@ -447,6 +447,8 @@ bool PlayerbotAIConfig::Initialize()
     }
 
     // Design decision 0033 and 0034: the bots' auction house. The price table is loaded at start only while this is on.
+    bankErrandsEnable = sConfigMgr->GetBoolDefault("AiPlayerbot.BankErrands.Enable", false);
+    bankErrandsMaxMoves = uint32(std::min(50, std::max(0, sConfigMgr->GetIntDefault("AiPlayerbot.BankErrands.MaxMoves", 8))));
     auctionEnable = sConfigMgr->GetBoolDefault("AiPlayerbot.Auction.Enable", false);
     auctionLongListingMinGold = uint32(std::min(1000000, std::max(0, sConfigMgr->GetIntDefault("AiPlayerbot.Auction.LongListingMinGold", 5))));
     auctionReserveLookaheadLevels = uint32(std::min(20, std::max(0, sConfigMgr->GetIntDefault("AiPlayerbot.Auction.ReserveLookaheadLevels", 5))));

@@ -49,6 +49,8 @@
 namespace
 {
     struct RecipeCounters { uint64 bought = 0, learned = 0, budget = 0, limit = 0; };
+    struct BankCounters { uint64 visits = 0, deposited = 0, withdrawn = 0, full = 0; };
+    BankCounters sBankCounters;
     std::mutex sRecipeLock;
     RecipeCounters sRecipeCounters;
     std::mutex sListingLock;
@@ -422,6 +424,7 @@ namespace
             BotAuctionPolicy::StackFacts stack;
             stack.entry = proto->ItemId;
             stack.count = item->GetCount();
+            stack.banked = bot->GetItemCount(proto->ItemId, true) - bot->GetItemCount(proto->ItemId, false);
             stack.vendorSellPrice = proto->SellPrice;
             stack.hasRange = PriceTable::Find(proto->ItemId, stack.range);
             // The cheap checks first: an item with no price range or one the core would refuse is never listable.
@@ -1069,7 +1072,7 @@ void BotAuction::OnStartup()
 
 void BotAuction::OnUpdate(uint32 diff)
 {
-    if (!sPlayerbotAIConfig->auctionEnable && !sConfigMgr->GetBoolDefault("AiPlayerbot.RecipeBuying.Enable", false))
+    if (!sPlayerbotAIConfig->auctionEnable && !sPlayerbotAIConfig->bankErrandsEnable && !sConfigMgr->GetBoolDefault("AiPlayerbot.RecipeBuying.Enable", false))
         return;
 
     auto const tickStart = std::chrono::steady_clock::now();
@@ -1117,8 +1120,17 @@ void BotAuction::OnUpdate(uint32 diff)
         sSummaryStarted = true;
         sLastSummaryMs = now;
     }
-    else if ((sTotalsDirty || [&]() { std::lock_guard<std::mutex> guard(sRecipeLock); return sRecipeCounters.bought || sRecipeCounters.budget || sRecipeCounters.limit; }()) && SummaryDue(getMSTimeDiff(sLastSummaryMs, now), sPlayerbotAIConfig->auctionSummaryMinutes))
+    else if ((sTotalsDirty || [&]() { std::lock_guard<std::mutex> guard(sRecipeLock); return sRecipeCounters.bought || sRecipeCounters.budget || sRecipeCounters.limit || sBankCounters.visits; }()) && SummaryDue(getMSTimeDiff(sLastSummaryMs, now), sPlayerbotAIConfig->auctionSummaryMinutes))
         LogSummary("interval");
+}
+
+void BotAuction::RecordBank(uint32 deposited, uint32 withdrawn, bool full)
+{
+    std::lock_guard<std::mutex> guard(sRecipeLock);
+    ++sBankCounters.visits;
+    sBankCounters.deposited += deposited;
+    sBankCounters.withdrawn += withdrawn;
+    sBankCounters.full += full ? 1 : 0;
 }
 
 void BotAuction::RecordRecipe(uint32 bought, uint32 learned, uint32 budget, uint32 limit)
@@ -1132,25 +1144,30 @@ void BotAuction::RecordRecipe(uint32 bought, uint32 learned, uint32 budget, uint
 
 void BotAuction::LogSummary(char const* why)
 {
-    if (!sPlayerbotAIConfig->auctionEnable && !sConfigMgr->GetBoolDefault("AiPlayerbot.RecipeBuying.Enable", false))
+    if (!sPlayerbotAIConfig->auctionEnable && !sPlayerbotAIConfig->bankErrandsEnable && !sConfigMgr->GetBoolDefault("AiPlayerbot.RecipeBuying.Enable", false))
         return;
 
     RecipeCounters recipes;
+    BankCounters bank;
     {
         std::lock_guard<std::mutex> guard(sRecipeLock);
+        bank = sBankCounters;
+        sBankCounters = BankCounters();
         recipes = sRecipeCounters;
         sRecipeCounters = RecipeCounters();
     }
     sLastSummaryMs = getMSTime();
     sTotalsDirty = false;
-    SF_LOG_INFO("playerbots", "[AUCTION] summary (%s): %s tickAvgMs=%.3f tickMaxMs=%.3f tickSamples=%llu queueAvg=%.2f queueMax=%llu snapshotsAtCap=%llu snapshotsTruncated=%llu listingsOmitted=%llu mailBacklogMax=%llu recipeBought=%llu recipeLearned=%llu recipeSkippedBudget=%llu recipeSkippedLimit=%llu",
+    SF_LOG_INFO("playerbots", "[AUCTION] summary (%s): %s tickAvgMs=%.3f tickMaxMs=%.3f tickSamples=%llu queueAvg=%.2f queueMax=%llu snapshotsAtCap=%llu snapshotsTruncated=%llu listingsOmitted=%llu mailBacklogMax=%llu recipeBought=%llu recipeLearned=%llu recipeSkippedBudget=%llu recipeSkippedLimit=%llu bankVisits=%llu bankDeposited=%llu bankWithdrawn=%llu bankFull=%llu",
                 why, FormatTotals(sTotals).c_str(), sInterval.tickUs.Average() / 1000.0, double(sInterval.tickUs.max) / 1000.0,
                 static_cast<unsigned long long>(sInterval.tickUs.count), sInterval.queueDepth.Average(),
                 static_cast<unsigned long long>(sInterval.queueDepth.max), static_cast<unsigned long long>(sInterval.snapshotsAtCap),
                 static_cast<unsigned long long>(sInterval.snapshotsTruncated), static_cast<unsigned long long>(sInterval.listingsOmitted),
                 static_cast<unsigned long long>(sInterval.mailBacklogMax), static_cast<unsigned long long>(recipes.bought),
                 static_cast<unsigned long long>(recipes.learned), static_cast<unsigned long long>(recipes.budget),
-                static_cast<unsigned long long>(recipes.limit));
+                static_cast<unsigned long long>(recipes.limit), static_cast<unsigned long long>(bank.visits),
+                static_cast<unsigned long long>(bank.deposited), static_cast<unsigned long long>(bank.withdrawn),
+                static_cast<unsigned long long>(bank.full));
     if (sInterval.snapshotsTruncated)
         SF_LOG_WARN("playerbots", "[AUCTION] snapshot truncation: %llu snapshots, %llu listings omitted in this interval",
                     static_cast<unsigned long long>(sInterval.snapshotsTruncated), static_cast<unsigned long long>(sInterval.listingsOmitted));

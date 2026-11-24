@@ -7,6 +7,13 @@ and this project follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Bank errands that deposit, part 1** (2026-11-24)
+  - Summary: A random bot on its bank errand now deposits whole stacks at the banker: profession materials it keeps
+    for later (within the existing keep caps) and rare or better items it neither wears nor sells. Quest items, bags,
+    consumables, tools, gear it could use and soulbound gear stay in its bags. At most 8 moves per visit; banked
+    materials count toward the auction and vendor keep rules; one `[BANK]` line per visit and counters in the auction
+    summary. Withdrawals wait for a craft goal. Off by default (`AiPlayerbot.BankErrands.*`).
+  - Why: Roadmap 0.3: the bank errand was only a walk and a pause, and bots' bags filled up with things they keep.
 - **Crafters buy recipes on their vendor trips** (2026-11-24)
   - Summary: A random bot with a crafting profession that stands at a vendor or repairer on its usual trip may buy one
     recipe it can learn now (skill high enough, not known, sold for gold), paid from the reserve's recipe share, then

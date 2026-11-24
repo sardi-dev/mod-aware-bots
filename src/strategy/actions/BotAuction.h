@@ -50,6 +50,7 @@ namespace BotAuction
     void OnUpdate(uint32 diff);
 
     // Map threads record recipe outcomes for the interval summary.
+    void RecordBank(uint32 deposited, uint32 withdrawn, bool full);
     void RecordRecipe(uint32 bought, uint32 learned, uint32 budget, uint32 limit);
 
     // World thread. Writes the "[AUCTION] summary" line.

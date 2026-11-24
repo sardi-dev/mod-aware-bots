@@ -247,3 +247,95 @@ Item* BankAction::FindItemInBank(uint32 itemId)
 
     return found;
 }
+// Automatic bank visits use the same storage checks and quest bookkeeping as the core auto-bank handler.
+#include "AuctionVisitPolicy.h"
+#include "BankErrandPolicy.h"
+#include "BotAuction.h"
+#include "BotSale.h"
+#include "Creature.h"
+#include "Log.h"
+#include "PlayerbotAIConfig.h"
+#include "RandomPlayerbotMgr.h"
+#include "PriceTable.h"
+#include "WorldSession.h"
+#include <unordered_set>
+
+namespace
+{
+uint32 BankFreeSlots(Player* bot)
+{
+    uint32 free = 0;
+    for (uint8 slot = BANK_SLOT_ITEM_START; slot < BANK_SLOT_ITEM_END; ++slot)
+        if (!bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot)) ++free;
+    for (uint8 slot = BANK_SLOT_BAG_START; slot < BANK_SLOT_BAG_END; ++slot)
+        if (Bag* bag = static_cast<Bag*>(bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot)))
+            free += bag->GetFreeSlots();
+    return free;
+}
+uint32 BagFreeSlots(Player* bot)
+{
+    uint32 free = 0;
+    for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
+        if (!bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot)) ++free;
+    for (uint8 slot = INVENTORY_SLOT_BAG_START; slot < INVENTORY_SLOT_BAG_END; ++slot)
+        if (Bag* bag = static_cast<Bag*>(bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot)))
+            free += bag->GetFreeSlots();
+    return free;
+}
+}
+
+void BankErrand::OnArrival(PlayerbotAI* ai, Player* bot, WorldObject* target)
+{
+    if (!sPlayerbotAIConfig->bankErrandsEnable || !target || !sRandomPlayerbotMgr->IsRandomBot(bot) ||
+        !AuctionVisitPolicy::NameAllowed(sPlayerbotAIConfig->auctionOnlyBots, bot->GetName()) ||
+        !BotSale::IsEligible(ai, bot) || !bot->GetNPCIfCanInteractWith(target->GetGUID(), UNIT_NPC_FLAG_BANKER))
+        return;
+
+    bot->GetSession()->SendShowBank(target->GetGUID());
+    std::unordered_set<uint64> sell;
+    for (Item* item : BotSale::SelectItemsToSell(ai, bot)) sell.insert(item->GetGUID());
+    std::vector<std::pair<uint8, uint8>> positions;
+    for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
+        positions.emplace_back(INVENTORY_SLOT_BAG_0, slot);
+    for (uint8 slot = INVENTORY_SLOT_BAG_START; slot < INVENTORY_SLOT_BAG_END; ++slot)
+        if (Bag* bag = static_cast<Bag*>(bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot)))
+            for (uint32 i = 0; i < bag->GetBagSize(); ++i) positions.emplace_back(slot, uint8(i));
+
+    uint32 deposited = 0;
+    bool full = false;
+    uint32 const professions = BotSale::ProfessionsOf(bot);
+    for (auto const& pos : positions)
+    {
+        if (!BankErrandPolicy::CanMove(deposited, sPlayerbotAIConfig->bankErrandsMaxMoves)) break;
+        if (!BotSale::IsEligible(ai, bot) || !bot->GetNPCIfCanInteractWith(target->GetGUID(), UNIT_NPC_FLAG_BANKER)) break;
+        Item* item = bot->GetItemByPos(pos.first, pos.second);
+        if (!item) continue;
+        ItemTemplate const* proto = item->GetTemplate();
+        auto const facts = BotSale::FactsOf(bot, item, professions);
+        BankErrandPolicy::Stack stack;
+        stack.count = item->GetCount();
+        stack.keepCap = BotAuctionPolicy::MaterialKeepCap(BotSale::MaterialUseOf(bot, proto));
+        stack.banked = bot->GetItemCount(proto->ItemId, true) - bot->GetItemCount(proto->ItemId, false);
+        bool const gear = proto->Class == ITEM_CLASS_ARMOR || proto->Class == ITEM_CLASS_WEAPON;
+        stack.protectedItem = facts.equipped || facts.bag || facts.questItem || facts.professionTool ||
+            facts.usableFoodOrDrink || proto->Class == ITEM_CLASS_CONSUMABLE || item->IsConjuredConsumable() || item->GetUInt32Value(ITEM_FIELD_EXPIRATION) ||
+            (gear && item->IsSoulBound()) || BotSale::UsageKeeps(ai, proto);
+        PricePolicy::PriceRange range;
+        bool const auctionCandidate = sPlayerbotAIConfig->auctionEnable && item->CanBeTraded() && PriceTable::Find(proto->ItemId, range);
+        stack.rareKept = !stack.keepCap && proto->Quality >= ITEM_QUALITY_RARE && !sell.count(item->GetGUID()) && !auctionCandidate;
+        if (!BankErrandPolicy::Deposit(stack)) continue;
+        if (!BankFreeSlots(bot)) { full = true; break; }
+        ItemPosCountVec dest;
+        InventoryResult const result = bot->CanBankItem(NULL_BAG, NULL_SLOT, dest, item, false);
+        if (result != EQUIP_ERR_OK) { if (!BankFreeSlots(bot)) { full = true; break; } continue; }
+        if (dest.size() == 1 && dest[0].pos == item->GetPos()) continue;
+        uint32 const entry = item->GetEntry(), count = item->GetCount();
+        bot->RemoveItem(pos.first, pos.second, true);
+        bot->ItemRemovedQuestCheck(entry, count);
+        bot->BankItem(dest, item, true);
+        ++deposited;
+    }
+    uint32 const freeBag = BagFreeSlots(bot), freeBank = BankFreeSlots(bot);
+    BotAuction::RecordBank(deposited, 0, full);
+    SF_LOG_INFO("playerbots", "[BANK] bot=%s deposited=%u withdrawn=%u freeBag=%u freeBank=%u", bot->GetName().c_str(), deposited, 0u, freeBag, freeBank);
+}

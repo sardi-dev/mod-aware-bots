@@ -35,6 +35,7 @@
 #include "WorldSession.h"
 #include "NewRpgRoamTransport.h"  // #890 (beyond AC)
 #include "BotRepair.h"  // #BT-015
+#include "BankAction.h"
 #include "BotSale.h"  // BT-149
 #include "BotAuction.h"  // design decision 0033
 #include "AuctionVisitPolicy.h"
@@ -1048,6 +1049,8 @@ bool NewRpgWanderNpcAction::Execute(Event /*event*/)
                 bot->SetStandState(UNIT_STAND_STATE_SIT);
             if (bot->CanInteractWithQuestGiver(object))
                 InteractWithNpcOrGameObjectForQuest(data.npcOrGo);
+            if (errand == Errand::Bank)
+                BankErrand::OnArrival(botAI, bot, object);
             if (errand == Errand::Trainer)
                 BotPvpTalents::BuyDualSpec(bot, object->ToCreature());  // BT-323
             // Design decision 0033: at the auctioneer or a mailbox a random bot does business; the work runs on the world thread.

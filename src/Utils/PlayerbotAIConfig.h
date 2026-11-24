@@ -234,6 +234,8 @@ public:
 
     // Design decision 0033 and 0034 (docs/economy/pricing-audit.md): the bots' auction house. Key AiPlayerbot.Auction.Enable. Off:
     // the price table is not loaded and nothing else of it runs.
+    bool bankErrandsEnable = false;
+    uint32 bankErrandsMaxMoves = 8;
     bool auctionEnable = false;
     // Listings of a stack worth more than this many gold run 24 hours instead of 12 (0 keeps every listing at 12 hours).
     // Key AiPlayerbot.Auction.LongListingMinGold.

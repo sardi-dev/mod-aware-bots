@@ -168,3 +168,7 @@ Prices and levels as our 5.4.8 database holds them (Wowhead may show the 1.25 ti
   money including a poor bot that still lists, deposits against purchases, overflow-safe levels).
 - `tools/economy/tests/test_economy_tools.py`: the generator functions on synthetic rows, the committed header, and the
   Python reference against the same numbers the C++ tests check.
+
+## Bank errands, part 1
+
+When enabled, a random bot at a banker deposits eligible whole stacks of retained profession materials and rare valuables, up to the configured move limit. The auction trial scope applies. Material keep counts include bank holdings. Craft withdrawals need a random bot craft goal, and auction withdrawals need a bank-aware sell list; neither is available yet. Bank bag slots and market-aware banking are deferred. Each visit logs its stack counts and free slots, with interval counts in the auction summary.

@@ -27,6 +27,10 @@
 class Item;
 class PlayerbotAI;
 class Unit;
+class Player;
+class WorldObject;
+
+namespace BankErrand { void OnArrival(PlayerbotAI* ai, Player* bot, WorldObject* banker); }
 
 class BankAction : public InventoryAction
 {

@@ -640,7 +640,8 @@ std::vector<Item*> BotSale::SelectItemsToSell(PlayerbotAI* botAI, Player* bot)
     ForEachBagItem(bot, [&](Item* item)
     {
         ItemTemplate const* proto = item->GetTemplate();
-        uint32& kept = keptByEntry[proto->ItemId];
+        auto const inserted = keptByEntry.emplace(proto->ItemId, bot->GetItemCount(proto->ItemId, true) - bot->GetItemCount(proto->ItemId, false));
+        uint32& kept = inserted.first->second;
 
         ItemFacts facts = FactsOf(bot, item, professions);
         facts.professionMaterial = facts.professionMaterial && KeepStack(kept, PROFESSION_MATERIAL_KEEP_MAX);
