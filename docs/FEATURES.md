@@ -84,7 +84,7 @@ The module builds on mod-playerbots for AzerothCore and the Legends of Azeroth 5
 | Feature | What it does | Source | State |
 |---------|--------------|--------|-------|
 | Queue fill | Bots fill the battleground queues humans wait in; optionally they open queues themselves | `AiPlayerbot.RandomBotJoinBG` (1), `AiPlayerbot.RandomBotAutoJoinBG` (0), `AiPlayerbot.RandomBotAutoJoin*` | beta (inherited) |
-| Playbooks per map | A written plan per map (goals, positions, roles, opening, mid-game rules, call-outs, failure modes, tests), then built in code: Warsong Gulch, Twin Peaks, Arathi Basin, Battle for Gilneas, Eye of the Storm, Silvershard Mines, Temple of Kotmogu (partial) | `docs/bg-sheets/` | beta |
+| Playbooks per map | A written plan per map (goals, positions, roles, opening, mid-game rules, call-outs, failure modes, tests), then built in code: Warsong Gulch, Twin Peaks, Arathi Basin, Battle for Gilneas, Eye of the Storm, Silvershard Mines, Temple of Kotmogu (partial: score-based leader stances and expiring carrier calls) | `docs/bg-sheets/` | beta |
 | Other maps | Alterac Valley, Strand of the Ancients, Isle of Conquest and Deepwind Gorge use the tactics of the base module or the shared objective layer | `src/strategy/bg/` | beta (inherited) |
 | Leader bot | One bot per side, never a human, confirms the stance (balanced, all out, defense and so on) at the gates and at every change | `AiPlayerbot.Pvp.Leader.Enable` | beta |
 | Call-outs | Bots call the enemy flag carrier, flags taken and dropped, enemies at a base, the score near the end; expert bots call every event, casual bots fewer and later | `AiPlayerbot.BattlegroundChat.*` | beta |

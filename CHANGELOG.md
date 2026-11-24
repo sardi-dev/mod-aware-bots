@@ -7,6 +7,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Temple of Kotmogu leader stances and call-outs** (2026-11-24)
+  - Summary: Every 20 s the side's bot leader projects both scores from the public score and picks balanced, hold,
+    push or all-in with hysteresis; the side's bots shift their support and hunter split to match, and the leader
+    announces a change in battleground chat. Bots call an enemy carrier they see, by orb colour, at a rate that rises
+    with their tier; calls expire, and a human's colour report is read too.
+  - Why: Roadmap 0.2: the approved playbook gives the leader the score race and the team shared, aging information.
 - **Temple of Kotmogu plays its approved playbook, first part** (2026-11-24)
   - Summary: Bots count enemy orb carriers only when a living teammate can see them (the orb owner shown on the map
     stays public); a full side opens 4 orb takers on different orbs, 3 supporters, 2 hunters and 1 flexible, scaled for

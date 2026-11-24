@@ -18,7 +18,11 @@
 #include "AbPlanLogic.h"
 #include "TokPlanLogic.h"
 #include "BgLeaderPolicy.h"
+#include "BgCalloutPolicy.h"
 #include "BotSkill.h"
+#include "BotVoice.h"
+#include "PvpMatchState.h"
+#include "PvpConfig.h"
 #include "WorldSession.h"
 #include <algorithm>
 
@@ -28,6 +32,7 @@
 #include "Battleground.h"
 #include "BattlegroundVOP.h"
 #include "Creature.h"
+#include "Config.h"
 #include "DBCStores.h"
 #include "DBCStructure.h"
 #include "GameObject.h"
@@ -267,15 +272,74 @@ bool BGTactics::selectObjectiveTOK(Battleground* bg)
         candidates.push_back({p->GetGUIDLow(), isBot ? BotSkill::TierOf(p) : BotSkillMath::Tier::EXPERT,
                               uint8(p->getLevel()), isBot, true, true});
     }
+    uint32 const now = getMSTime();
+    static bool const chatEnabled = sConfigMgr->GetBoolDefault("AiPlayerbot.BattlegroundChat.Enable", true) &&
+                                    sConfigMgr->GetBoolDefault("AiPlayerbot.BattlegroundChat.Replies", true);
+    PvpMatch::Handle const match = PvpMatch::Touch(bg->GetInstanceID(), bg->GetMapId(), bg->GetElapsedTime(),
+                                                   bg->GetStatus() == STATUS_WAIT_LEAVE, now);
+    match->IngestInbox(now, PvpConfig::ReaderLimits());
+    match->Side(uint32(myTeam)).observations.Sweep(now);
+    struct SidePlan
     {
-        static std::mutex leaderLock;
-        static std::map<std::pair<uint32, uint32>, BgLeader::Election> elections;
+        uint32 generation = 0, sampleAt = 0, oldOurs = 0, oldTheirs = 0, startElapsed = 0;
+        uint32 callAt[4] = {}, stanceCallAt = 0;
+        std::map<uint32, uint32> senderCalls;
+        BgLeader::Election election;
+        TokPlan::Stance stance = TokPlan::Stance::BALANCED;
+        bool announce = false, started = false;
+    };
+    static std::mutex leaderLock;
+    static std::map<std::pair<uint32, uint32>, SidePlan> plans;
+    TokPlan::Stance stance;
+    bool announce = false;
+    {
         std::lock_guard<std::mutex> guard(leaderLock);
-        BgLeader::Election& election = elections[std::make_pair(bg->GetInstanceID(), uint32(myTeam))];
-        BgLeader::Change const change = BgLeader::Elect(election, candidates, getMSTime(), bg->GetStatus() == STATUS_IN_PROGRESS);
+        if (plans.size() > 128)
+            for (auto it = plans.begin(); it != plans.end(); )
+                if (it->first.first != bg->GetInstanceID() && !PvpMatch::Find(it->first.first)) it = plans.erase(it);
+                else ++it;
+        SidePlan& plan = plans[std::make_pair(bg->GetInstanceID(), uint32(myTeam))];
+        if (plan.generation != match->Key().generation) { plan = SidePlan(); plan.generation = match->Key().generation; }
+        bool const active = bg->GetStatus() == STATUS_IN_PROGRESS;
+        BgLeader::Change const change = BgLeader::Elect(plan.election, candidates, now, active);
         if (change != BgLeader::Change::NONE)
-            SF_LOG_DEBUG("playerbots", "[BGTOK] leader team=%u leader=%u epoch=%u instance=%u",
-                         uint32(myTeam), election.leader, election.epoch, bg->GetInstanceID());
+            SF_LOG_DEBUG("playerbots", "[BGTOK-LEAD] team=%u leader=%u epoch=%u instance=%u",
+                         uint32(myTeam), plan.election.leader, plan.election.epoch, bg->GetInstanceID());
+        if (active && !plan.started) { plan.started = true; plan.startElapsed = bg->GetElapsedTime(); }
+        if (active && plan.election.leader == bot->GetGUIDLow() &&
+            (!plan.sampleAt || getMSTimeDiff(plan.sampleAt, now) >= TokPlan::DECISION_MS))
+        {
+            uint32 const ours = bg->GetTeamScore(uint32(myTeam));
+            uint32 const theirs = bg->GetTeamScore(1 - uint32(myTeam));
+            uint32 const played = bg->GetElapsedTime() - plan.startElapsed;
+            uint32 const remaining = played < 1500000 ? 1500000 - played : 0;
+            if (plan.sampleAt)
+            {
+                TokPlan::Projection const projection = TokPlan::Project(ours, theirs, plan.oldOurs, plan.oldTheirs,
+                                                                         getMSTimeDiff(plan.sampleAt, now), remaining);
+                TokPlan::Stance const next = TokPlan::ChooseStance(projection, ours, theirs, remaining, plan.stance);
+                if (next != plan.stance) { plan.stance = next; plan.announce = true; }
+                SF_LOG_DEBUG("playerbots", "[BGTOK-LEAD] instance=%u team=%u score=%u-%u projected=%.0f-%.0f stance=%u",
+                             bg->GetInstanceID(), uint32(myTeam), ours, theirs, projection.ours, projection.theirs, unsigned(plan.stance));
+            }
+            plan.oldOurs = ours; plan.oldTheirs = theirs; plan.sampleAt = now ? now : 1;
+        }
+        stance = plan.stance;
+        if (active && plan.announce && plan.election.leader == bot->GetGUIDLow() &&
+            (!plan.stanceCallAt || getMSTimeDiff(plan.stanceCallAt, now) >= 20000))
+            announce = true;
+    }
+    if (announce && chatEnabled)
+    {
+        char const* line = stance == TokPlan::Stance::HOLD ? "hold center" : stance == TokPlan::Stance::PUSH ? "push their carrier" :
+                           stance == TokPlan::Stance::ALL_IN ? "all in, take orbs" : "regroup mid";
+        if (BotVoice::Say(botAI, "tok.stance", line, {}, BotVoice::Channel::BATTLEGROUND, BotVoice::Priority::NOTICE, 100, nullptr, true))
+        {
+            std::lock_guard<std::mutex> guard(leaderLock);
+            SidePlan& plan = plans[std::make_pair(bg->GetInstanceID(), uint32(myTeam))];
+            if (plan.stance == stance) { plan.announce = false; plan.stanceCallAt = now ? now : 1; }
+            SF_LOG_DEBUG("playerbots", "[BGTOK-CALL] %s says %s", bot->GetName().c_str(), line);
+        }
     }
     unsigned support = 0;
     for (Player* p : friends)
@@ -311,7 +375,7 @@ bool BGTactics::selectObjectiveTOK(Battleground* bg)
     std::sort(bots.begin(), bots.end(), [](Player* a, Player* b) { return a->GetGUIDLow() < b->GetGUIDLow(); });
     unsigned index = 0;
     while (index < bots.size() && bots[index] != bot) ++index;
-    TokPlan::Split const split = TokPlan::Opening(friends.size());
+    TokPlan::Split const split = TokPlan::WithStance(TokPlan::Opening(friends.size()), stance);
     TokPlan::Role const role = TokPlan::RoleAt(split, index);
     RememberTokRole(bot->GetGUID(), role);
     bool orbFree[BG_TOK_MAX_ORBS] = {};
@@ -323,7 +387,7 @@ bool BGTactics::selectObjectiveTOK(Battleground* bg)
     int assigned = -1;
     bool reserved[BG_TOK_MAX_ORBS] = {};
     unsigned assignedCount = 0;
-    for (unsigned n = 0; n < bots.size() && assignedCount < split.pickup; ++n)
+    for (unsigned n = 0; n < bots.size() && n < split.pickup && assignedCount < split.pickup; ++n)
     {
         bool carrying = false;
         uint32 const auras[] = { BG_VOP_SPELL_ORB_PICKED_UP_1, BG_VOP_SPELL_ORB_PICKED_UP_2,
@@ -354,6 +418,37 @@ bool BGTactics::selectObjectiveTOK(Battleground* bg)
             for (uint32 aura : orbAuras)
                 if (p->HasAura(aura) && bot->GetDistance(p) < enemyDist)
                     { nearestEnemy = p; enemyDist = bot->GetDistance(p); }
+    // Only the calling bot's own sight may produce a report.
+    static char const* const colours[] = {"blue", "purple", "green", "orange"};
+    for (Player* enemy : enemies)
+    {
+        if (!chatEnabled) break;
+        if (!AbLogic::WithinSight(enemy->GetPositionX(), enemy->GetPositionY(), enemy->GetPositionZ(),
+                                  bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ()) || !bot->CanSeeOrDetect(enemy)) continue;
+        for (uint8 c = 0; c < BG_TOK_MAX_ORBS; ++c)
+        {
+            if (!enemy->HasAura(orbAuras[c])) continue;
+            bool allowed;
+            {
+                std::lock_guard<std::mutex> guard(leaderLock);
+                SidePlan& plan = plans[std::make_pair(bg->GetInstanceID(), uint32(myTeam))];
+                allowed = TokPlan::CallAllowed(now, plan.callAt[c], plan.senderCalls[bot->GetGUIDLow()], unsigned(BotSkill::TierOf(bot)));
+            }
+            if (!allowed) continue;
+            std::string const line = std::string("enemy ") + colours[c] + " carrier";
+            if (BotVoice::Say(botAI, "tok.enemy_carrier", line, {}, BotVoice::Channel::BATTLEGROUND, BotVoice::Priority::NOTICE, 100, nullptr, true))
+            {
+                { std::lock_guard<std::mutex> guard(leaderLock);
+                  SidePlan& plan = plans[std::make_pair(bg->GetInstanceID(), uint32(myTeam))];
+                  plan.callAt[c] = plan.senderCalls[bot->GetGUIDLow()] = now ? now : 1; }
+                PvpObs::Observation obs;
+                obs.kind = PvpObs::Kind::ENEMY_CARRIER; obs.provenance = PvpObs::Provenance::BOT_CALL;
+                obs.place = c; obs.senderLow = bot->GetGUIDLow();
+                match->Side(uint32(myTeam)).observations.Add(obs, now, PvpConfig::ReaderLimits());
+                SF_LOG_DEBUG("playerbots", "[BGTOK-CALL] %s says %s", bot->GetName().c_str(), line.c_str());
+            }
+        }
+    }
     {
         static thread_local std::map<BotGuid, uint32> logged;
         uint32& last = logged[bot->GetGUID()];
@@ -402,6 +497,17 @@ bool BGTactics::selectObjectiveTOK(Battleground* bg)
         setObjective(target->GetPositionX(), target->GetPositionY(), target->GetPositionZ());
         return true;
     }
+
+    // A colour-only report has no coordinates. Hunters search the central objective without
+    // consulting the unseen carrier's live position.
+    if (role == TokPlan::Role::HUNT)
+        for (PvpObs::Observation const& obs : match->Side(uint32(myTeam)).observations.items)
+            if (obs.kind == PvpObs::Kind::ENEMY_CARRIER && obs.place < BG_TOK_MAX_ORBS && TokPlan::Fresh(now, obs.receivedMs, obs.expiresMs - obs.receivedMs) &&
+                BgCallout::Heeds(BotSkill::TierOf(bot), bot->GetGUIDLow(), obs.receivedMs))
+            {
+                setObjective(TOK_CENTRE_X, TOK_CENTRE_Y, TOK_CENTRE_Z);
+                return true;
+            }
 
     // No carrier on either side: take a free orb if any remain, else contest the centre.
     if (nearestOrb >= 0)

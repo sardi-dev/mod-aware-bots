@@ -1,6 +1,7 @@
 #include "TestHarness.h"
 #include "TokPlanLogic.h"
 #include "AbPlanLogic.h"
+#include "BgCalloutPolicy.h"
 #include <vector>
 using namespace TokPlan;
 TEST(tok_opening_sizes)
@@ -35,4 +36,34 @@ TEST(tok_seen_by_living_teammates)
     CHECK(!seen(observers));
     observers.push_back({true, true, true});
     CHECK(seen(observers));
+}
+
+TEST(tok_projection_and_stance)
+{
+    Projection p = Project(500, 400, 400, 350, 20000, 200000);
+    CHECK(p.ours == 1500 && p.theirs == 900);
+    CHECK(p.ourFinish < p.theirFinish);
+    CHECK(ChooseStance(p, 500, 400, 200000, Stance::BALANCED) == Stance::HOLD);
+    Projection q = Project(400, 500, 350, 400, 20000, 200000);
+    CHECK(ChooseStance(q, 400, 500, 200000, Stance::BALANCED) == Stance::PUSH);
+    CHECK(ChooseStance(q, 400, 500, 100000, Stance::PUSH) == Stance::ALL_IN);
+    Projection near{550, 500, 100, 200};
+    CHECK(ChooseStance(near, 500, 450, 300000, Stance::BALANCED) == Stance::BALANCED);
+    CHECK(ChooseStance(near, 500, 450, 300000, Stance::HOLD) == Stance::HOLD);
+    CHECK(ChooseStance(Project(0, 0, 0, 0, 0, 1000), 0, 0, 1000, Stance::BALANCED) == Stance::BALANCED);
+    Split h = WithStance(Opening(10), Stance::HOLD), a = WithStance(Opening(10), Stance::ALL_IN);
+    CHECK(h.support == 4 && h.hunt == 1);
+    CHECK(a.support == 2 && a.hunt == 4 && a.flex == 0);
+}
+TEST(tok_call_rules)
+{
+    CHECK(Fresh(16000, 1001)); CHECK(!Fresh(16001, 1001));
+    CHECK(Fresh(10, 0xfffffff0u));
+    CHECK(CallAllowed(30001, 10001, 10001, 0));
+    CHECK(!CallAllowed(30000, 10001, 10001, 0));
+    CHECK(!CallAllowed(30001, 10001, 10001, 2));
+    auto call = BgCallout::Parse("enemy green carrier mid", BgCallout::MapKindOf(998));
+    CHECK(call.valid && call.kind == PvpObs::Kind::ENEMY_CARRIER && call.place == 2);
+    CHECK(!BgCallout::Parse("enemy green blue carrier", BgCallout::MapKind::TOK).valid);
+    CHECK(!BgCallout::Parse("enemy green carrier?", BgCallout::MapKind::TOK).valid);
 }

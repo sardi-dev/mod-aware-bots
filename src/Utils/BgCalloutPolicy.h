@@ -48,7 +48,8 @@ enum class MapKind : std::uint8_t
     AB,
     BFG,
     EYE,
-    SM
+    SM,
+    TOK
 };
 
 // The battleground maps the reader knows. Arathi Basin's map id is the real one (the Random Battleground queue keeps its own
@@ -58,6 +59,8 @@ constexpr std::uint32_t WSG_MAP_ID = 489;
 
 inline MapKind MapKindOf(std::uint32_t mapId)
 {
+    if (mapId == 998)
+        return MapKind::TOK;
     if (mapId == WSG_MAP_ID)
         return MapKind::WSG;
     if (mapId == TpLogic::TP_MAP_ID)
@@ -297,6 +300,26 @@ inline Report Parse(std::string const& text, MapKind map)
     Report report;
     if (map == MapKind::NONE)
         return report;
+    if (map == MapKind::TOK)
+    {
+        if (text.find('?') != std::string::npos) return report;
+        std::vector<std::string> const words = BgPlan::CallWords(text);
+        bool enemy = false; int colour = -1;
+        for (std::string const& word : words)
+        {
+            if (word == "enemy" || word == "efc") enemy = true;
+            else if (word == "blue" || word == "purple" || word == "green" || word == "orange")
+            {
+                int const c = word == "blue" ? 0 : word == "purple" ? 1 : word == "green" ? 2 : 3;
+                if (colour >= 0 && colour != c) return report;
+                colour = c;
+            }
+            else if (word != "carrier" && word != "orb" && word != "mid" && word != "center" && word != "centre" && word != "at") return report;
+        }
+        if (enemy && colour >= 0)
+        { report.valid = true; report.kind = PvpObs::Kind::ENEMY_CARRIER; report.place = std::uint8_t(colour); }
+        return report;
+    }
     // A question is not a report ("inc bs?"), and a negation is the opposite of one.
     if (text.find('?') != std::string::npos)
         return report;
