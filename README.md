@@ -11,7 +11,7 @@ A few hundred bots with their own plans make a small server feel alive: they que
 fight battlegrounds with a plan, climb an arena ladder, trade what they earned and remember who was kind to them.
 You lead them like players, with marks, roles and party chat, not a page of commands.
 
-| 34 | 47 | 20 | 6 | 1,700+ | ~300 |
+| 34 | 47 | 20 | 6 | 1,750+ | ~300 |
 |:--:|:--:|:--:|:--:|:--:|:--:|
 | specialisations | dungeon strategies | raid strategies | battleground playbooks | unit tests | bots in daily use |
 
@@ -32,15 +32,15 @@ You lead them like players, with marks, roles and party chat, not a page of comm
 
 | Area | ✅ Ready | 🛠️ In development |
 |------|---------|-------------------|
-| World life | Random bots, roaming with purpose, breaks and log-offs, full activity near humans, bot guilds, skill tiers, no cheats or free upkeep, random bot passwords | Travel across continents, city errands, training at trainers, gear upgrades, summons and meeting stones, duel spots, stuck recovery, a higher-level starting batch |
+| World life | Random bots, roaming with purpose, breaks and log-offs, full activity near humans, bot guilds, skill tiers, no cheats or free upkeep, random bot passwords | Travel across continents, a back-off for quests that keep failing, city errands, training at trainers, gear upgrades, summons and meeting stones, duel spots, stuck recovery, a higher-level starting batch |
 | Groups and dungeons | Goal-based invites, travel to your group, alt bots, dungeon finder fill (tanks within a level of you), finder manners, dungeon chat, a voice per bot | Leading by marks, loot manners, bot-led dungeon runs (a run that cannot reach a boss ends and rests the dungeon), bots forming groups in LFG chat, leftover bot groups breaking up, ledge recovery, strategies for 47 dungeons |
 | Classes and roles | Rotations for all 34 specialisations | New bots pick the tank or healer spec their level band is short of, class sheets from player guides, talents and glyphs, tank, healer and damage role sheets, smart dispel timing |
 | Raids | | Strategies for 20 raids, every cheat removed |
-| Battlegrounds | | Queue fill, 6 map playbooks, a leader bot, call-outs, a human call-out reader; Silvershard Mines, Deepwind Gorge, Tiger's Peak and Temple of Kotmogu rules in the core patches |
+| Battlegrounds | | Queue fill, 6 map playbooks, a leader bot, call-outs, a human call-out reader, seen-only enemy intel, a flag strike group that pushes through to the stand; Silvershard Mines, Deepwind Gorge, Tiger's Peak and Temple of Kotmogu rules in the core patches |
 | Arenas | | Named 2v2 bot teams with a rating ladder, a ladder NPC, ladder news, a JSON snapshot, team play |
 | Duels and PvP | | 1v1 engine, enemy awareness, smart interrupts and defensives, fake casts, burst windows, kill windows, class PvP packages |
-| Economy (off) | | Auction selling and buying, mail, a price table from game data, a gold reserve for upkeep, profession materials kept, trial limits, economy tools |
-| Social life (off) | | Liking score per human, playstyles, shared-quest group offers, emote replies, privacy and wipe, trial limits |
+| Economy (off) | | Auction selling and buying, mail, a price table from game data, a gold reserve for upkeep, profession materials kept, trial limits, soak measurements, economy tools |
+| Social life (off) | | Liking score per human, playstyles, shared-quest group offers, emote replies, privacy and wipe, trial limits, soak summary by cause |
 | AI layer (off) | | Player-to-player chat with human timing, openers, honest "I am a bot" answers, battleground strategy, memory, rule-based fallback, budget cap, privacy filter, admin commands |
 | Quality | Unit tests, sidecar and round-trip tests, scenario harness, performance monitor, tagged logs, core gap list, uninstall SQL | |
 
