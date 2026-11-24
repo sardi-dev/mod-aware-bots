@@ -7,6 +7,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Random bots pick the role their level band is short of** (2026-11-24)
+  - Summary: A random bot that chooses its first specialization prefers tank or healer when free bots of its faction
+    in its finder level window are short of that role (target shares 25 / 20 / 55, at least four free tanks and four
+    free healers per band from level 25 to 54). Existing specializations are never changed. Keys:
+    `AiPlayerbot.SpecRoleBalance.Enable`, `.TankShare`, `.HealerShare`, `.DamageShare`.
+  - Why: The finder often had no free tank in a band, so dungeon groups waited or never formed.
 - **Auction soak measurements** (2026-11-24)
   - Summary: The interval `[AUCTION] summary` line reports auction work per world tick (average and maximum ms),
     waiting visits, timeouts, snapshots that hit their cap and the listings they left out (one warning per interval at

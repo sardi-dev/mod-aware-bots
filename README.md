@@ -34,7 +34,7 @@ You lead them like players, with marks, roles and party chat, not a page of comm
 |------|---------|-------------------|
 | World life | Random bots, roaming with purpose, breaks and log-offs, full activity near humans, bot guilds, skill tiers, no cheats or free upkeep, random bot passwords | Travel across continents, city errands, training at trainers, gear upgrades, summons and meeting stones, duel spots, stuck recovery, a higher-level starting batch |
 | Groups and dungeons | Goal-based invites, travel to your group, alt bots, dungeon finder fill (tanks within a level of you), finder manners, dungeon chat, a voice per bot | Leading by marks, loot manners, bot-led dungeon runs (a run that cannot reach a boss ends and rests the dungeon), bots forming groups in LFG chat, leftover bot groups breaking up, ledge recovery, strategies for 47 dungeons |
-| Classes and roles | Rotations for all 34 specialisations | Class sheets from player guides, talents and glyphs, tank, healer and damage role sheets, smart dispel timing |
+| Classes and roles | Rotations for all 34 specialisations | New bots pick the tank or healer spec their level band is short of, class sheets from player guides, talents and glyphs, tank, healer and damage role sheets, smart dispel timing |
 | Raids | | Strategies for 20 raids, every cheat removed |
 | Battlegrounds | | Queue fill, 6 map playbooks, a leader bot, call-outs, a human call-out reader; Silvershard Mines, Deepwind Gorge, Tiger's Peak and Temple of Kotmogu rules in the core patches |
 | Arenas | | Named 2v2 bot teams with a rating ladder, a ladder NPC, ladder news, a JSON snapshot, team play |

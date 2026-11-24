@@ -902,6 +902,16 @@ AiPlayerbot.LfgAnyLevel.LevelWindow = 3
 # Default: 0 (off: the level window alone)
 AiPlayerbot.LfgAnyLevel.ItemLevelWindow = 0
 
+# Random bots choosing a specialization prefer roles short in their faction and finder level window.
+# Shares are relative weights (0 disables preference for that role). At levels 25 to 54, aim for at least
+# four free tanks and four free healers when their shares are nonzero. Level 10 to 14 picks use level 15.
+# Existing specializations stay unchanged except at a normal randomization or reset.
+# Default: 1 / 25 / 20 / 55
+AiPlayerbot.SpecRoleBalance.Enable = 1
+AiPlayerbot.SpecRoleBalance.TankShare = 25
+AiPlayerbot.SpecRoleBalance.HealerShare = 20
+AiPlayerbot.SpecRoleBalance.DamageShare = 55
+
 # Dungeon Finder fill (beyond AC): when a real player or group is queued in the finder, every IntervalSeconds the module
 # counts the roles already queued for the same dungeons on that side and queues free random bots (same faction, inside
 # the dungeon's level range and within LevelWindow levels of the player, level 15 or more) for the roles still missing,

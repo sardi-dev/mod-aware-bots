@@ -1,6 +1,8 @@
 #include "BotFactory.h"
 #include "BotProfessionProgress.h"
 #include "BotPvpTalents.h"
+#include "LfgFill.h"
+#include "SpecRolePolicy.h"
 
 #include <algorithm>
 #include <map>
@@ -1079,16 +1081,56 @@ void BotFactory::InitPet()
 // (balance, feral, guardian, restoration) where the old std::rand() % 3 could never reach the 4th. A tab the class
 // does not have (ChrSpecialization.dbc) never counts, whatever the config says. AC falls back to specno 0 (and logs)
 // when no weight is set, as below.
+static int SpecRole(uint32 id)
+{
+    switch (id)
+    {
+        case SPEC_WARRIOR_PROTECTION: case SPEC_PALADIN_PROTECTION: case SPEC_DEATH_KNIGHT_BLOOD:
+        case SPEC_DRUID_GUARDIAN: case SPEC_MONK_BREWMASTER:
+            return SpecRolePolicy::Tank;
+        case SPEC_PRIEST_DISCIPLINE: case SPEC_PRIEST_HOLY: case SPEC_PALADIN_HOLY:
+        case SPEC_SHAMAN_RESTORATION: case SPEC_DRUID_RESTORATION: case SPEC_MONK_MISTWEAVER:
+            return SpecRolePolicy::Healer;
+        default:
+            return SpecRolePolicy::Damage;
+    }
+}
+
 static uint32 PickRandomSpecTab(Player* bot)
 {
     uint8 const cls = bot->getClass();
     uint32 weight[PlayerbotAIConfig::MAX_SPECNO] = {};
     uint32 pointSum = 0;
+    int roles[PlayerbotAIConfig::MAX_SPECNO] = { -1, -1, -1, -1 };
+    bool available[SpecRolePolicy::Count] = {};
     for (uint32 i = 0; i < sChrSpecializationStore.GetNumRows(); ++i)
     {
         ChrSpecializationEntry const* spec = sChrSpecializationStore.LookupEntry(i);
         if (spec && spec->classId == cls && spec->TabPage < PlayerbotAIConfig::MAX_SPECNO)
+        {
             weight[spec->TabPage] = sPlayerbotAIConfig->randomClassSpecProb[cls][spec->TabPage];
+            roles[spec->TabPage] = SpecRole(i);
+            available[roles[spec->TabPage]] = true;
+        }
+    }
+    int preferred = -1;
+    if (bot->GetSession() && (sPlayerbotAIConfig->IsInRandomAccountList(bot->GetSession()->GetAccountId()) ||
+         sPlayerbotAIConfig->IsInHigherBatchAccountList(bot->GetSession()->GetAccountId())) &&
+        (!GET_PLAYERBOT_AI(bot) || !GET_PLAYERBOT_AI(bot)->IsRealPlayer()))
+        preferred = LfgFill::PickSpecRole(bot->GetGUIDLow(), uint32(bot->GetTeamId()), bot->getLevel(), available);
+    if (preferred >= 0)
+    {
+        for (uint32 i = 0; i < PlayerbotAIConfig::MAX_SPECNO; ++i)
+            if (roles[i] != preferred)
+                weight[i] = 0;
+        // A configured zero weight does not make a needed specialization unavailable.
+        bool any = false;
+        for (uint32 w : weight)
+            any = any || w != 0;
+        if (!any)
+            for (uint32 i = 0; i < PlayerbotAIConfig::MAX_SPECNO; ++i)
+                if (roles[i] == preferred)
+                    weight[i] = 1;
     }
     for (uint32 w : weight)
         pointSum += w;
@@ -1196,7 +1238,7 @@ void BotFactory::SwitchSpecialization(Player* bot, uint32 tab)
     }
 }
 
-// If no spec then pick one at random (need to change that to balance).
+// Only choose when the bot has no specialization.
 void BotFactory::PickSpecialization()
 {
     if (BotGetSpecialization(bot) != Specializations::SPEC_NONE || bot->getLevel() < 10)

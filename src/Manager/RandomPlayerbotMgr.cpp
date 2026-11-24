@@ -189,14 +189,14 @@ void RandomPlayerbotMgr::UpdateAIInternal(uint32 elapsed, bool /*minimal*/)
         BattlefieldBots::Update(bfBots);
     }
 
+    // Refresh the specialization census even when finder queueing is disabled.
+    LfgFill::Update();
+
     // #142 (AC Bot/RandomPlayerbotMgr.cpp:390-394): refresh the LFG queue snapshot random bots consult (LfgJoinAction).
     if (sPlayerbotAIConfig->randomBotJoinLfg)
     {
         if (time(nullptr) > (_lfgCheckTimer + 30))
             CheckLfgQueue();
-
-        // Queues bots for what a queued player's group lacks, and starts a bot-only run now and then (LfgFill.h).
-        LfgFill::Update();
 
         // Bots that form a dungeon group by hand (BotLfm.h).
         BotLfm::Update();

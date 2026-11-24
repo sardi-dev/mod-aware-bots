@@ -6,6 +6,7 @@
 
 #include "LfgFill.h"
 #include "LfgFillPolicy.h"
+#include "SpecRolePolicy.h"
 #include "LfgLeavePolicy.h"
 #include "LfgStallPolicy.h"
 
@@ -69,6 +70,17 @@ namespace
         ROLE_DAMAGE = 2,
         ROLE_COUNT = 3
     };
+
+    struct SpecCensusEntry
+    {
+        uint32 guid, team, level, role;
+        time_t expires;
+    };
+    std::mutex specCensusLock;
+    std::vector<SpecCensusEntry> specCensus;
+    std::vector<SpecCensusEntry> specReservations;
+    bool specCensusReady = false;
+    uint32 specWindow = 6;
 
     // What a five-player group holds.
     uint32 const ROLE_WANTED[ROLE_COUNT] = { 1, 1, 3 };
@@ -1163,6 +1175,41 @@ namespace
     }
 }  // namespace
 
+int LfgFill::PickSpecRole(uint32 guid, uint32 team, uint32 level, bool const available[3])
+{
+    if (!sConfigMgr->GetBoolDefault("AiPlayerbot.SpecRoleBalance.Enable", true))
+        return -1;
+    uint32 shares[3] = {
+        uint32(std::max(0, std::min(100, sConfigMgr->GetIntDefault("AiPlayerbot.SpecRoleBalance.TankShare", 25)))),
+        uint32(std::max(0, std::min(100, sConfigMgr->GetIntDefault("AiPlayerbot.SpecRoleBalance.HealerShare", 20)))),
+        uint32(std::max(0, std::min(100, sConfigMgr->GetIntDefault("AiPlayerbot.SpecRoleBalance.DamageShare", 55)))) };
+    std::lock_guard<std::mutex> guard(specCensusLock);
+    if (!specCensusReady)
+        return -1;
+    time_t const now = time(nullptr);
+    specReservations.erase(std::remove_if(specReservations.begin(), specReservations.end(),
+        [now, guid](SpecCensusEntry const& e) { return e.expires <= now || e.guid == guid; }), specReservations.end());
+    uint32 counts[3] = {};
+    uint32 const targetLevel = std::max(uint32(15), level);
+    for (SpecCensusEntry const& e : specCensus)
+    {
+        if (e.guid == guid || e.team != team || !LfgFillPolicy::InReach(e.level, targetLevel, specWindow, MIN_FINDER_LEVEL))
+            continue;
+        bool reserved = false;
+        for (SpecCensusEntry const& r : specReservations)
+            if (r.guid == e.guid) { reserved = true; break; }
+        if (!reserved)
+            ++counts[e.role];
+    }
+    for (SpecCensusEntry const& e : specReservations)
+        if (e.team == team && LfgFillPolicy::InReach(e.level, targetLevel, specWindow, MIN_FINDER_LEVEL))
+            ++counts[e.role];
+    int const role = SpecRolePolicy::Choose(counts, shares, available, targetLevel);
+    if (role >= 0)
+        specReservations.push_back({ guid, team, targetLevel, uint32(role), now + 60 });
+    return role;
+}
+
 bool LfgFill::Enabled() { return EnabledFlag().load(std::memory_order_relaxed); }
 
 uint32 LfgFill::MaxRunSeconds() { return maxRunSeconds.load(std::memory_order_relaxed); }
@@ -1222,6 +1269,27 @@ void LfgFill::Update()
     EnabledFlag().store(settings.enable, std::memory_order_relaxed);
     maxRunSeconds.store(settings.maxRunSeconds, std::memory_order_relaxed);
     failureCooldownHours.store(settings.failureCooldownHours, std::memory_order_relaxed);
+    // Collect live state only on the world thread; map threads read counts under the lock.
+    std::vector<Player*> const bots = sRandomPlayerbotMgr->GetPlayerBotsSnapshot();
+    std::vector<SpecCensusEntry> census;
+    for (Player* candidate : bots)
+    {
+        if (!FinderBot(candidate) || BotGetSpecialization(candidate) == SPEC_NONE)
+            continue;
+        uint32 drink = 0;
+        BotSalePolicy::FinderSupply supply = BotSalePolicy::FinderSupply::Ready;
+        if (HoldOf(candidate, now, supply, drink) != LfgFillPolicy::Hold::Free)
+            continue;
+        int const role = RoleIndexOf(LfgGetBotRoles(candidate));
+        if (role >= 0 && role < ROLE_COUNT)
+            census.push_back({ candidate->GetGUIDLow(), uint32(candidate->GetTeamId()), candidate->getLevel(), uint32(role), 0 });
+    }
+    {
+        std::lock_guard<std::mutex> guard(specCensusLock);
+        specCensus.swap(census);
+        specWindow = settings.levelWindow;
+        specCensusReady = true;
+    }
     if (!settings.enable || !sPlayerbotAIConfig->randomBotJoinLfg)
         return;
 
@@ -1237,7 +1305,6 @@ void LfgFill::Update()
     CollectRequests(players, requests, pool);
 
     // Bots already queued (by this pass) count for the roles of the requests on their side.
-    std::vector<Player*> const bots = sRandomPlayerbotMgr->GetPlayerBotsSnapshot();
     for (Player* bot : bots)
     {
         if (!bot || !bot->IsInWorld() || bot->GetGroup() || !sRandomPlayerbotMgr->IsRandomBot(bot))

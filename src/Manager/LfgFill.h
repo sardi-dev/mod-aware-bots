@@ -27,6 +27,9 @@
 
 namespace LfgFill
 {
+    // Select and reserve a role against the latest world-thread census; -1 if unavailable.
+    int PickSpecRole(uint32 guid, uint32 team, uint32 level, bool const available[3]);
+
     // AiPlayerbot.LfgFill.Enable, read by LfgJoinAction::isUseful (any thread).
     bool Enabled();
 
