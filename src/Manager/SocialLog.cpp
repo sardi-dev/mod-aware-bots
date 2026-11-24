@@ -11,13 +11,14 @@
 #include "PlayerbotAIConfig.h"
 
 #include <ctime>
-#include <mutex>
+#include <atomic>
+#include <array>
+#include "LikingStore.h"
 
 namespace
 {
-    std::mutex tallyLock;
-    SocialSoak::Tally tally;
-    SocialSoak::Tally lastWritten;
+    std::array<std::atomic<uint64>, SocialSoak::COUNTER_COUNT> counts{};
+    SocialSoak::Tally totals;
     uint32 lastSummaryAt = 0;
 
     bool AnySwitchOn()
@@ -26,12 +27,21 @@ namespace
             sPlayerbotAIConfig->socialQuestOfferEnable || sPlayerbotAIConfig->socialEmoteRepliesEnable;
     }
 
-    // Under the lock. The window is the time since the last summary, or since the first call.
-    void WriteSummaryLocked(uint32 now)
+    // Called only on the world thread or during shutdown.
+    void WriteSummary(uint32 now)
     {
+        SocialSoak::Tally interval;
+        for (size_t i = 0; i < SocialSoak::COUNTER_COUNT; ++i)
+        {
+            auto const counter = SocialSoak::Counter(i);
+            uint64 const value = counts[i].exchange(0, std::memory_order_relaxed);
+            interval.Add(counter, value);
+            totals.Add(counter, value);
+        }
         uint32 const window = lastSummaryAt && now >= lastSummaryAt ? now - lastSummaryAt : 0;
-        SF_LOG_INFO("playerbots", "%s", SocialSoak::SummaryLine(sPlayerbotAIConfig->socialOnlyBots, tally, window).c_str());
-        lastWritten = tally;
+        auto const tiers = LikingStore::TierCounts(now);
+        SF_LOG_INFO("playerbots", "%s", SocialSoak::SummaryLine(sPlayerbotAIConfig->socialOnlyBots, interval, window, tiers,
+            totals.Get(SocialSoak::Counter::QuestOffer), totals.Get(SocialSoak::Counter::DbWrites)).c_str());
         lastSummaryAt = now;
     }
 }  // namespace
@@ -43,8 +53,7 @@ bool SocialLog::InScope(Player* bot)
 
 void SocialLog::Count(SocialSoak::Counter counter, uint64 amount)
 {
-    std::lock_guard<std::mutex> guard(tallyLock);
-    tally.Add(counter, amount);
+    counts[size_t(counter)].fetch_add(amount, std::memory_order_relaxed);
 }
 
 void SocialLog::Action(std::string const& line)
@@ -66,7 +75,6 @@ void SocialLog::Update()
         return;
 
     uint32 const now = uint32(time(nullptr));
-    std::lock_guard<std::mutex> guard(tallyLock);
     if (lastSummaryAt == 0)
     {
         // The first call starts the window: no line for a server that has just started.
@@ -74,8 +82,8 @@ void SocialLog::Update()
         return;
     }
 
-    if (SocialSoak::SummaryDue(lastSummaryAt, now, sPlayerbotAIConfig->socialSummarySeconds, !(tally == lastWritten)))
-        WriteSummaryLocked(now);
+    if (SocialSoak::SummaryDue(lastSummaryAt, now, sPlayerbotAIConfig->socialSummarySeconds, true))
+        WriteSummary(now);
 }
 
 void SocialLog::Shutdown()
@@ -83,6 +91,5 @@ void SocialLog::Shutdown()
     if (!AnySwitchOn())
         return;
 
-    std::lock_guard<std::mutex> guard(tallyLock);
-    WriteSummaryLocked(uint32(time(nullptr)));
+    WriteSummary(uint32(time(nullptr)));
 }

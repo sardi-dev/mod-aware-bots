@@ -402,13 +402,20 @@ only the listed bots take part in anything social, every other bot behaves as wi
 | `[SOCIAL] liking bot=<name> human=<guid> event=<name> steps=<n> result=up\|down\|capped\|queued before=<0-100> after=<0-100>` | info with `SoakLog = 1`, else debug | one per applied event (group and guild time included) |
 | `[SOCIAL] emote bot=<name> human=<guid> text_emote=<id> aim=bot\|nobody yards=<n>` | info with `SoakLog = 1`, else debug | one per gesture that played |
 | `[SOCIAL] offer kind=quest\|guild bot=<name> human=<guid> quest=<id> result=made` | info always | one per offer made (the guild offer also keeps its `[BOTGUILD]` line) |
-| `[SOCIAL] summary scope=<all bots\|N named bots> window=<s>s liking_up=.. liking_down=.. ... out_of_scope=..` | info | totals since the server started, every `SummarySeconds` (900) when a counter changed, and once at shutdown |
+| `[SOCIAL] summary (interval): scope=<all bots\|N named bots> window=<s>s liking_up=.. liking_down=.. ...` | info | interval counts every `SummarySeconds` (1800 by default), and once at shutdown |
 | `[SOCIAL] config: ... scope=.. soaklog=.. summary=..s` | info | once at start and at every config reload |
 
 Humans appear as the low guid only. The summary counters: `liking_up liking_down liking_capped liking_queued emote_reply
 emote_no_gesture emote_chance emote_limited emote_cold emote_busy quest_offer quest_offer_refused guild_offer guild_offer_refused
 out_of_scope`. Refusals are counted once per human and pass (quest) or per ask (guild), never logged line by line.
 `liking_queued` is an event that arrived before the human's rows loaded (it applies on load; the line shows no score).
+Cause counters count applied moves, including queued events when they replay. `quest_pair_cooldown` and
+`quest_rolling_limit` count candidate refusals after the preceding gates. `db_writes` counts asynchronous statements queued by
+the store, including maintenance and deletes, not synchronous shutdown writes. `total_quest_offer` and `total_db_writes` are
+cumulative since startup. Pair tiers are a snapshot of loaded human rows only, using decayed scores and configured thresholds;
+cold-or-above, stranger-or-above, friendly-or-above and close are inclusive and overlap. The snapshot excludes unloaded and implicit neutral pairs.
+Shared-quest offers are group invites; separate acceptance and decline attribution is not tracked. City and trade chatter caps
+are design items and are not implemented.
 
 ### 13.4 Live checks for the soak
 

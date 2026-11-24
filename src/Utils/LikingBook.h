@@ -8,6 +8,7 @@
 #include "LikingPolicy.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <iterator>
@@ -44,6 +45,8 @@ constexpr size_t MAX_WAITING = 64;
 // Pair cooldowns of quest offers kept per human; the ones that ran out are dropped past it.
 constexpr size_t MAX_PAIR_OFFERS = 64;
 
+enum class QuestResult { Made, NotReady, Liking, PairCooldown, RollingLimit };
+
 class Book
 {
 public:
@@ -67,7 +70,8 @@ public:
     // The rows of the database arrived (offerAt is the stored time of the last guild offer, 0 for none). Events that
     // waited replay on them in order, and the rows they change turn dirty.
     void Load(LikingPolicy::Tuning const& tuning, uint32_t human, std::vector<Row> const& rows, uint32_t offerAt,
-        std::vector<QuestOffer> const& questOffers = {})
+        std::vector<QuestOffer> const& questOffers = {},
+        void (*onReplay)(LikingPolicy::Event, double, double) = nullptr)
     {
         Human& book = humans[human];
         book.rows.clear();
@@ -85,7 +89,12 @@ public:
         std::vector<Waiting> waiting;
         waiting.swap(book.waiting);
         for (Waiting const& event : waiting)
+        {
+            double const before = Value(tuning, human, event.bot, event.at);
             Change(tuning, book, event.bot, event.event, event.steps, event.at);
+            if (onReplay)
+                onReplay(event.event, before, Value(tuning, human, event.bot, event.at));
+        }
     }
 
     // One event for a pair. Returns false when the human is unknown to the book. Before the human's rows are in, the event
@@ -122,6 +131,23 @@ public:
         return row == itr->second.rows.end() ? neutral : LikingPolicy::ValueAt(tuning, row->second.pair, now);
     }
 
+    // Loaded rows only; scores are decayed at the snapshot time.
+    std::array<uint64_t, 4> TierCounts(LikingPolicy::Tuning const& tuning, uint32_t now) const
+    {
+        std::array<uint64_t, 4> counts{};
+        for (auto const& human : humans)
+            if (human.second.loaded)
+                for (auto const& row : human.second.rows)
+                {
+                    double const value = LikingPolicy::ValueAt(tuning, row.second.pair, now);
+                    ++counts[0];
+                    counts[1] += value >= tuning.coldBelow;
+                    counts[2] += value >= tuning.friendlyAt;
+                    counts[3] += value >= tuning.closeAt;
+                }
+        return counts;
+    }
+
     // The last guild offer to the human (0 for none) and the in-memory window of offers per hour.
     uint32_t GuildOfferAt(uint32_t human) const
     {
@@ -150,25 +176,26 @@ public:
     // human's hour window has room for another offer from any bot. True counts the offer: the window takes one and the
     // pair cooldown starts. Nothing changes when it is false.
     bool TakeQuestOffer(LikingPolicy::Tuning const& tuning, uint32_t human, uint32_t bot, uint32_t now,
-        uint32_t pairCooldownSeconds)
+        uint32_t pairCooldownSeconds, QuestResult* result = nullptr)
     {
+        auto set = [result](QuestResult value) { if (result) *result = value; return value == QuestResult::Made; };
         auto const itr = humans.find(human);
         if (itr == humans.end() || !itr->second.loaded)
-            return false;
+            return set(QuestResult::NotReady);
 
         Human& book = itr->second;
         if (!LikingPolicy::QuestOfferAllowed(tuning, Value(tuning, human, bot, now)))
-            return false;
+            return set(QuestResult::Liking);
 
         auto const last = book.questOfferAt.find(bot);
         if (last != book.questOfferAt.end() && !LikingPolicy::OfferCooldownPassed(last->second, now, pairCooldownSeconds))
-            return false;
+            return set(QuestResult::PairCooldown);
 
         book.questWindow.erase(std::remove_if(book.questWindow.begin(), book.questWindow.end(),
                                    [now](uint32_t at) { return now >= at && now - at >= LikingPolicy::SECONDS_PER_HOUR; }),
             book.questWindow.end());
         if (book.questWindow.size() >= tuning.questOffersPerHour)
-            return false;
+            return set(QuestResult::RollingLimit);
         book.questWindow.push_back(now);
         book.questDirty.push_back({ human, bot, now });
 
@@ -180,7 +207,7 @@ public:
         }
 
         book.questOfferAt[bot] = now;
-        return true;
+        return set(QuestResult::Made);
     }
 
     // The changed rows of one human (0: of everyone), at most `limit` of them, marked clean. The second list carries the

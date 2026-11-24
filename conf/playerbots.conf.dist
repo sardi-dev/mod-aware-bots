@@ -4231,12 +4231,11 @@ AiPlayerbot.Social.EmoteReplies.UntargetedChance = 35
 # SoakLog: 1 writes one line per social action at info level (liking change, emote reply, offer: "[SOCIAL] liking ...",
 # "[SOCIAL] emote ...", "[SOCIAL] offer ..."; bots by name, humans by low guid only); 0 keeps them at debug level. Offers are always
 # at info level.
-# SummarySeconds: seconds between two "[SOCIAL] summary" lines with the counters since the start (written only when a counter
-# changed, and once more at shutdown); 0 turns the periodic line off.
-# Default: empty, 0, 900
+# SummarySeconds: seconds between interval summaries (also written at shutdown); 0 turns periodic summaries off.
+# Default: empty, 0, 1800
 AiPlayerbot.Social.OnlyBots =
 AiPlayerbot.Social.SoakLog = 0
-AiPlayerbot.Social.SummarySeconds = 900
+AiPlayerbot.Social.SummarySeconds = 1800
 
 # The bots' auction house (design decision 0033 and 0034, docs/economy/pricing-audit.md). Random bots list what they looted,
 # gathered or crafted and buy what they need, from the auction house of their own faction, at prices from one range per

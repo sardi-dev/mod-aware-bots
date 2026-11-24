@@ -436,7 +436,7 @@ bool PlayerbotAIConfig::Initialize()
         socialEmoteReplies.untargetedChancePct = uint32(std::min(100, std::max(0, sConfigMgr->GetIntDefault("AiPlayerbot.Social.EmoteReplies.UntargetedChance", int32(emoteDefaults.untargetedChancePct)))));
         socialOnlyBots = SocialSoak::Scope::Parse(sConfigMgr->GetStringDefault("AiPlayerbot.Social.OnlyBots", ""));
         socialSoakLog = sConfigMgr->GetBoolDefault("AiPlayerbot.Social.SoakLog", false);
-        socialSummarySeconds = uint32(std::max(0, sConfigMgr->GetIntDefault("AiPlayerbot.Social.SummarySeconds", 900)));
+        socialSummarySeconds = uint32(std::max(0, sConfigMgr->GetIntDefault("AiPlayerbot.Social.SummarySeconds", 1800)));
         SF_LOG_INFO("playerbots", "[SOCIAL] config: liking=%u playstyle=%u questoffer=%u emotereplies=%u scope=%s soaklog=%u summary=%us",
                     uint32(socialLikingEnable), uint32(socialPlaystyleEnable), uint32(socialQuestOfferEnable),
                     uint32(socialEmoteRepliesEnable), socialOnlyBots.Describe().c_str(), uint32(socialSoakLog), socialSummarySeconds);

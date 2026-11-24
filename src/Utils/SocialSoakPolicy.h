@@ -111,6 +111,9 @@ enum class Counter : uint8_t
     GuildOffer,       // a guild offer made
     GuildOfferRefused,// a leader the liking gate, the cooldown or the hour cap refused
     OutOfScope,       // a bot left out because it is not on the OnlyBots list
+    QuestPairCooldown, QuestRollingLimit, DbWrites,
+    UpGroupTime, UpDungeonDone, UpTraded, UpDueled, UpGuildTime, UpThanked, UpInsulted, UpKicked, UpLootNinja,
+    DownGroupTime, DownDungeonDone, DownTraded, DownDueled, DownGuildTime, DownThanked, DownInsulted, DownKicked, DownLootNinja,
     Count
 };
 
@@ -135,6 +138,27 @@ inline char const* CounterName(Counter counter)
         case Counter::GuildOffer: return "guild_offer";
         case Counter::GuildOfferRefused: return "guild_offer_refused";
         case Counter::OutOfScope: return "out_of_scope";
+        case Counter::QuestPairCooldown: return "quest_pair_cooldown";
+        case Counter::QuestRollingLimit: return "quest_rolling_limit";
+        case Counter::DbWrites: return "db_writes";
+        case Counter::UpGroupTime: return "up_group_time";
+        case Counter::UpDungeonDone: return "up_dungeon_done";
+        case Counter::UpTraded: return "up_traded";
+        case Counter::UpDueled: return "up_dueled";
+        case Counter::UpGuildTime: return "up_guild_time";
+        case Counter::UpThanked: return "up_thanked";
+        case Counter::UpInsulted: return "up_insulted";
+        case Counter::UpKicked: return "up_kicked";
+        case Counter::UpLootNinja: return "up_loot_ninja";
+        case Counter::DownGroupTime: return "down_group_time";
+        case Counter::DownDungeonDone: return "down_dungeon_done";
+        case Counter::DownTraded: return "down_traded";
+        case Counter::DownDueled: return "down_dueled";
+        case Counter::DownGuildTime: return "down_guild_time";
+        case Counter::DownThanked: return "down_thanked";
+        case Counter::DownInsulted: return "down_insulted";
+        case Counter::DownKicked: return "down_kicked";
+        case Counter::DownLootNinja: return "down_loot_ninja";
         case Counter::Count: break;
     }
     return "unknown";
@@ -205,11 +229,11 @@ private:
     std::array<uint64_t, COUNTER_COUNT> counts{};
 };
 
-// The summary line is written when the interval ran out and something changed since the last one, so a quiet night is not
-// filled with identical lines. interval 0 turns the periodic line off (the line at shutdown still comes).
+// Interval 0 turns the periodic line off (the line at shutdown still comes).
 inline bool SummaryDue(uint32_t lastAt, uint32_t now, uint32_t intervalSeconds, bool changed)
 {
-    if (intervalSeconds == 0 || !changed)
+    (void)changed;
+    if (intervalSeconds == 0)
         return false;
     if (now < lastAt)
         return true;
@@ -217,10 +241,21 @@ inline bool SummaryDue(uint32_t lastAt, uint32_t now, uint32_t intervalSeconds, 
 }
 
 // One line of the summary. `windowSeconds` is the time since the previous summary (or the start), the counters are totals since
-// the server started.
-inline std::string SummaryLine(Scope const& scope, Tally const& tally, uint32_t windowSeconds)
+// the interval.
+inline std::string SummaryLine(Scope const& scope, Tally const& tally, uint32_t windowSeconds,
+    std::array<uint64_t, 4> const& tiers = {}, uint64_t totalQuestOffers = 0, uint64_t totalDbWrites = 0)
 {
-    return "[SOCIAL] summary scope=" + scope.Describe() + " window=" + std::to_string(windowSeconds) + "s " + tally.Fields();
+    return "[SOCIAL] summary (interval): scope=" + scope.Describe() + " window=" + std::to_string(windowSeconds) + "s " +
+        tally.Fields() + " pairs_cold_or_above=" + std::to_string(tiers[0]) +
+        " pairs_stranger_or_above=" + std::to_string(tiers[1]) + " pairs_friendly_or_above=" + std::to_string(tiers[2]) +
+        " pairs_close=" + std::to_string(tiers[3]) + " total_quest_offer=" + std::to_string(totalQuestOffers) +
+        " total_db_writes=" + std::to_string(totalDbWrites);
+}
+
+// Event enums are contiguous in LikingPolicy; keep the counter ranges in the same order.
+inline Counter CauseCounter(LikingPolicy::Event event, bool up)
+{
+    return Counter(size_t(up ? Counter::UpGroupTime : Counter::DownGroupTime) + size_t(event));
 }
 
 // The score moves a liking line names.

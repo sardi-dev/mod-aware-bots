@@ -226,7 +226,7 @@ public:
     // lines at info level, and the seconds between two summary lines. Keys AiPlayerbot.Social.OnlyBots, .SoakLog, .SummarySeconds.
     SocialSoak::Scope socialOnlyBots;
     bool socialSoakLog = false;
-    uint32 socialSummarySeconds = 900;
+    uint32 socialSummarySeconds = 1800;
 
     // Design decision 0033 and 0034 (docs/economy/pricing-audit.md): the bots' auction house. Key AiPlayerbot.Auction.Enable. Off:
     // the price table is not loaded and nothing else of it runs.

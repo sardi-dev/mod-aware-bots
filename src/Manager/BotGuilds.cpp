@@ -14,6 +14,7 @@
 #include "DatabaseEnv.h"
 #include "Guild.h"
 #include "LikingStore.h"
+#include "SocialLog.h"
 #include "GuildMgr.h"
 #include "Log.h"
 #include "ObjectAccessor.h"
@@ -522,6 +523,7 @@ namespace
                 Say(leader, "guild_invite_offer", "Hey %name, we have a friendly guild, <%guildname>. Want to join?",
                     { { "%name", human->GetName() }, { "%guildname", guild->GetName() } }, BotVoice::Channel::WHISPER, human);
                 guild->HandleInviteMember(leader->GetSession(), human->GetName());
+                SocialLog::Count(SocialSoak::Counter::GuildOffer);
                 humanOffered[human->GetGUIDLow()] = now;
                 SF_LOG_INFO("playerbots", "[BOTGUILD] %s offers <%s> to %s", leader->GetName().c_str(), guild->GetName().c_str(),
                             human->GetName().c_str());

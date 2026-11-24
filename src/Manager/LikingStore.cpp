@@ -177,7 +177,10 @@ namespace
         double const after = book.Value(tuning, humanLow, bot->GetGUIDLow(), now);
 
         SocialSoak::Move const move = SocialSoak::ClassifyMove(loaded, LikingPolicy::DeltaOf(tuning, event) * double(steps), before, after);
-        SocialLog::Count(SocialSoak::MoveCounter(move));
+        if (move != SocialSoak::Move::Down || after < before - 0.001)
+            SocialLog::Count(SocialSoak::MoveCounter(move));
+        if (move == SocialSoak::Move::Up || (move == SocialSoak::Move::Down && after < before - 0.001))
+            SocialLog::Count(SocialSoak::CauseCounter(event, move == SocialSoak::Move::Up));
         SocialLog::Action(SocialSoak::LikingLine(bot->GetName(), humanLow, event, steps, move, before, after));
     }
 
@@ -273,7 +276,16 @@ namespace
                         questOffers.push_back({ itr->first, f[0].GetUInt32(), f[1].GetUInt32() });
                     } while (questResult->NextRow());
                 }
-                book.Load(Tuning(), itr->first, rows, offerAt, questOffers);
+                book.Load(Tuning(), itr->first, rows, offerAt, questOffers,
+                    [](LikingPolicy::Event event, double before, double after)
+                    {
+                        if (after > before + 0.001 || after < before - 0.001)
+                        {
+                            bool const up = after > before;
+                            SocialLog::Count(up ? SocialSoak::Counter::LikingUp : SocialSoak::Counter::LikingDown);
+                            SocialLog::Count(SocialSoak::CauseCounter(event, up));
+                        }
+                    });
                 itr = loading.erase(itr);
             }
             else if (now >= entry.askedAt + LOAD_RETRY_SECONDS)
@@ -295,7 +307,10 @@ namespace
             if (shuttingDown)
                 PlayerbotsDatabase.DirectExecute(sql.c_str());
             else
+            {
                 PlayerbotsDatabase.Execute(sql.c_str());
+                SocialLog::Count(SocialSoak::Counter::DbWrites);
+            }
         };
 
         for (size_t first = 0; first < rows.size(); first += LikingBook::ROWS_PER_STATEMENT)
@@ -315,7 +330,10 @@ namespace
     void ExecuteAll(std::vector<std::string> const& statements)
     {
         for (std::string const& sql : statements)
+        {
             PlayerbotsDatabase.Execute(sql.c_str());
+            SocialLog::Count(SocialSoak::Counter::DbWrites);
+        }
     }
 
     void RetentionLocked(uint32 now)
@@ -323,6 +341,7 @@ namespace
         ExecuteAll(LikingBook::RetentionSql(Tuning(), now, sPlayerbotAIConfig->socialLikingRetentionDays));
         PlayerbotsDatabase.Execute(LikingBook::QuestRetentionSql(now, sPlayerbotAIConfig->socialLikingRetentionDays,
             sPlayerbotAIConfig->socialQuestOffer.pairCooldownSeconds).c_str());
+        SocialLog::Count(SocialSoak::Counter::DbWrites);
     }
 
     // The once-a-minute pass: humans the book does not know yet, then group time and guild time.
@@ -403,6 +422,12 @@ namespace
 bool LikingStore::Enabled()
 {
     return sPlayerbotAIConfig->socialLikingEnable && sPlayerbotAIConfig->enabled;
+}
+
+std::array<uint64_t, 4> LikingStore::TierCounts(uint32 now)
+{
+    std::lock_guard<std::mutex> guard(storeLock);
+    return book.TierCounts(Tuning(), now);
 }
 
 void LikingStore::Update()
@@ -668,7 +693,8 @@ bool LikingStore::MayOfferGuild(Player* leader, Player* human, uint32 cooldownSe
         LikingPolicy::OfferCooldownPassed(book.GuildOfferAt(humanLow), now, cooldownSeconds) &&
         book.TakeGuildOffer(humanLow, now, tuning.guildOffersPerHour);
     // Refusals are counted only: the guild pass asks every few seconds for each recruiting leader in reach.
-    SocialLog::Count(taken ? SocialSoak::Counter::GuildOffer : SocialSoak::Counter::GuildOfferRefused);
+    if (!taken)
+        SocialLog::Count(SocialSoak::Counter::GuildOfferRefused);
     if (taken)
         SocialLog::Offer(SocialSoak::OfferLine("guild", bot->GetName(), humanLow, 0, true));
     return taken;
@@ -706,10 +732,18 @@ bool LikingStore::MayOfferQuestGroup(Player* bot, Player* human, uint32 pairCool
     std::lock_guard<std::mutex> guard(storeLock);
     // A human who is online and was never seen starts loading now; the offer waits for the next pass.
     BeginHumanLocked(humanLow, Now());
-    bool const taken = book.TakeQuestOffer(Tuning(), humanLow, resolvedBot->GetGUIDLow(), Now(), pairCooldownSeconds);
+    LikingBook::QuestResult result;
+    bool const taken = book.TakeQuestOffer(Tuning(), humanLow, resolvedBot->GetGUIDLow(), Now(), pairCooldownSeconds, &result);
+    if (result == LikingBook::QuestResult::PairCooldown)
+        SocialLog::Count(SocialSoak::Counter::QuestPairCooldown);
+    else if (result == LikingBook::QuestResult::RollingLimit)
+        SocialLog::Count(SocialSoak::Counter::QuestRollingLimit);
     if (taken)
         for (LikingBook::QuestOffer const& offer : book.TakeQuestDirty(humanLow))
+        {
             PlayerbotsDatabase.Execute(LikingBook::QuestOfferInsertSql(offer).c_str());
+            SocialLog::Count(SocialSoak::Counter::DbWrites);
+        }
     return taken;
 }
 

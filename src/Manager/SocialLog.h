@@ -3,7 +3,7 @@
  *
  * The soak side of the social layer (docs/social/social.md section 13): the OnlyBots scope test, the counters, the one log
  * line per social action and the summary line. The decisions and the line formats are in Utils/SocialSoakPolicy.h; this file
- * only holds the shared tally behind a lock and writes to the server log. Callable from the world, map and session threads.
+ * only holds the shared atomic counters and writes to the server log. Callable from the world, map and session threads.
  */
 
 #ifndef _PLAYERBOT_SOCIALLOG_H

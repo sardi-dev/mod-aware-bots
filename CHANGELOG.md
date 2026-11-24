@@ -7,6 +7,14 @@ and this project follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **The social summary counts the interval, by cause** (2026-11-24)
+  - Summary: `[SOCIAL] summary (interval)` now reports each interval's liking changes up and down by cause (group
+    time, a finished dungeon, a trade, a duel, guild time, thanks, insults, kicks, ninja looting), how many loaded
+    pairs sit at each liking tier, quest offers made and held back by the pair cooldown or the rolling limit, guild
+    offers, emote answers and queued store writes, with running totals for offers and writes. Counters are lock-free;
+    the default interval is 1800 s.
+  - Why: The old line held totals since the start, so a soak could not show whether the features stay active and
+    inside their caps over time.
 - **Random bots pick the role their level band is short of** (2026-11-24)
   - Summary: A random bot that chooses its first specialization prefers tank or healer when free bots of its faction
     in its finder level window are short of that role (target shares 25 / 20 / 55, at least four free tanks and four

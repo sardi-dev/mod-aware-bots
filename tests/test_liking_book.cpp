@@ -552,3 +552,27 @@ TEST(sql_quest_offer_history_and_retention)
     CHECK(LikingBook::QuestRetentionSql(NOW, 1, 2 * DAY) ==
         "DELETE FROM `playerbots_social_quest_offer` WHERE `offered_at` < " + std::to_string(NOW - 2 * DAY));
 }
+
+TEST(liking_book_tiers_and_quest_refusal_reasons)
+{
+    LikingPolicy::Tuning tuning;
+    LikingBook::Book book;
+    LikingBook::QuestResult result;
+    CHECK(!book.TakeQuestOffer(tuning, 1, 2, 100, 60, &result));
+    CHECK(result == LikingBook::QuestResult::NotReady);
+    book.Begin(1);
+    LikingBook::Row row;
+    row.human = 1; row.bot = 2; row.pair.value = 0.8; row.pair.updatedAt = 100;
+    book.Load(tuning, 1, {row}, 0);
+    auto counts = book.TierCounts(tuning, 100);
+    CHECK(counts[0] == 1 && counts[1] == 1 && counts[2] == 1 && counts[3] == 1);
+    CHECK(!book.TakeQuestOffer(tuning, 1, 3, 100, 60, &result));
+    CHECK(result == LikingBook::QuestResult::Liking);
+    CHECK(book.TakeQuestOffer(tuning, 1, 2, 100, 60, &result));
+    CHECK(result == LikingBook::QuestResult::Made);
+    CHECK(!book.TakeQuestOffer(tuning, 1, 2, 101, 60, &result));
+    CHECK(result == LikingBook::QuestResult::PairCooldown);
+    tuning.questOffersPerHour = 1;
+    CHECK(!book.TakeQuestOffer(tuning, 1, 2, 161, 60, &result));
+    CHECK(result == LikingBook::QuestResult::RollingLimit);
+}

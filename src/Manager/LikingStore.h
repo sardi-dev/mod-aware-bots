@@ -21,6 +21,7 @@
 #include "Define.h"
 #include "LikingPolicy.h"
 
+#include <array>
 #include <optional>
 #include <string>
 #include <vector>
@@ -32,6 +33,7 @@ namespace LikingStore
 {
     // The switch (AiPlayerbot.Social.Liking.Enable).
     bool Enabled();
+    std::array<uint64_t, 4> TierCounts(uint32 now);
 
     // World thread, from RandomPlayerbotMgr::UpdateAIInternal next to BotGuilds::Update; throttles itself. Takes in the
     // loads that came back, runs the group-time and guild-time pass once a minute, flushes changed rows and runs the

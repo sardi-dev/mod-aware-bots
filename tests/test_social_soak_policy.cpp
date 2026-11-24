@@ -81,7 +81,7 @@ TEST(social_soak_the_summary_line_is_due_only_when_something_changed_after_the_i
     using SocialSoak::SummaryDue;
     CHECK(SummaryDue(1000, 1900, 900, true));
     CHECK(!SummaryDue(1000, 1899, 900, true));
-    CHECK(!SummaryDue(1000, 5000, 900, false));
+    CHECK(SummaryDue(1000, 5000, 900, false));
     // An interval of 0 turns the periodic line off.
     CHECK(!SummaryDue(1000, 99999, 0, true));
     // A clock set back still lets the line out.
@@ -91,9 +91,11 @@ TEST(social_soak_the_summary_line_names_the_scope_the_window_and_the_totals)
 {
     Tally tally;
     tally.Add(Counter::GuildOffer);
-    std::string const line = SocialSoak::SummaryLine(Scope::Parse("A,B"), tally, 900);
-    CHECK(line.rfind("[SOCIAL] summary scope=2 named bots window=900s ", 0) == 0);
+    std::string const line = SocialSoak::SummaryLine(Scope::Parse("A,B"), tally, 900, { 4, 3, 2, 1 }, 8, 9);
+    CHECK(line.rfind("[SOCIAL] summary (interval): scope=2 named bots window=900s ", 0) == 0);
     CHECK(line.find("guild_offer=1") != std::string::npos);
+    CHECK(line.find("pairs_cold_or_above=4 pairs_stranger_or_above=3 pairs_friendly_or_above=2 pairs_close=1") != std::string::npos);
+    CHECK(line.find("total_quest_offer=8 total_db_writes=9") != std::string::npos);
 }
 TEST(social_soak_an_emote_verdict_feeds_its_counter_and_the_silent_ones_feed_none)
 {
@@ -145,4 +147,10 @@ TEST(social_soak_every_liking_event_has_a_log_name)
     for (Event const event : { Event::GroupTime, Event::DungeonDone, Event::Traded, Event::Dueled, Event::GuildTime, Event::Thanked,
              Event::Insulted, Event::Kicked, Event::LootNinja })
         CHECK(std::string(SocialSoak::EventName(event)) != "unknown");
+}
+
+TEST(social_soak_cause_counters_follow_event_order)
+{
+    CHECK(SocialSoak::CauseCounter(LikingPolicy::Event::Traded, true) == Counter::UpTraded);
+    CHECK(SocialSoak::CauseCounter(LikingPolicy::Event::LootNinja, false) == Counter::DownLootNinja);
 }
