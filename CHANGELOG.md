@@ -7,6 +7,13 @@ and this project follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Temple of Kotmogu plays its approved playbook, first part** (2026-11-24)
+  - Summary: Bots count enemy orb carriers only when a living teammate can see them (the orb owner shown on the map
+    stays public); a full side opens 4 orb takers on different orbs, 3 supporters, 2 hunters and 1 flexible, scaled for
+    smaller sides, with humans counted but never given a role; a carrier holds the center only while supported and
+    falls back on seen danger, returning with hysteresis; no deliberate orb drops; one bot leader per side. Leader
+    stance changes and call-outs are still to come.
+  - Why: Roadmap 0.2: Kotmogu ran on shared tactics and a random split and read every enemy carrier from the whole map.
 - **Temple of Kotmogu playbook, draft** (2026-11-24)
   - Summary: `docs/bg-sheets/temple-of-kotmogu.md`: map facts from the core and the patches with sources, roles by side
     size, opening and mid-game rules, call-outs, class jobs, failure modes, the gap list, tests and the open questions.

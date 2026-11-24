@@ -8,22 +8,19 @@
  * (AC BattleGroundTactics.cpp: WSG selectObjective 2144-2311, atFlag pick-up 3561-3965,
  * moveToStart 1719-1840).
  *
- * Build 14 (#577): the scoring-zone area triggers 7734 / 7735 are now sent for the bot (TokSyncZone below) - they are
- * client-driven, so without it a carrier at the temple centre still scored the OUT rate (3 per tick, not 5).
- *
- * Owner 2026-10-08: divide and conquer like AV, randomized per match and per bot. AC's AV split (AC
- * BattleGroundTactics.cpp:1865-1910: a per-match team strategy from GetBotStrategyForTeam sets how many "bg role"
- * ranks defend, and the per-bot role - urand(0, 9) at join, BattleGroundJoinAction.cpp - picks the bot's job) is
- * extended here: the team's TOKBotStrategy (weighted per-match roll, BattleGroundTactics.cpp RollTokStrategy) picks a
- * TOK_PLANS row - orb takers (split over the west and east orbs), the centre group (with our carriers / the scoring
- * pit), hunters (the enemy carriers) - and the bot's role picks its group. The 1:1 harness pins both (role i % 10,
- * strat=<a>,<h>), so a 1:1 stays deterministic. Evidence: "[BGTOK] strategy ..." (per match) and "[BGTOK] plan ..."
- * (per bot, 30 s).
+ * The current deterministic policy uses visible enemy observations and public orb availability.
+ * Scoring zones and approaches still require live validation.
  */
 
 #include "BattleGroundTactics.h"
 #include "BgRealType.h"
 #include "BotCompat_C.h"
+#include "AbPlanLogic.h"
+#include "TokPlanLogic.h"
+#include "BgLeaderPolicy.h"
+#include "BotSkill.h"
+#include "WorldSession.h"
+#include <algorithm>
 
 // DatabaseEnv.h must precede the battleground headers (see BattleGroundTactics.cpp).
 #include "DatabaseEnv.h"
@@ -71,49 +68,6 @@ namespace
     Position const TOK_WAIT_HORDE = {1780.4f, 1588.0f, 31.1f, 0.0f};
 
     uint32 const TOK_ORB_ENTRY_FIRST = BG_VOP_OBJECT_ORB_1_ENTRY;
-
-    // Per TOKBotStrategy (BattleGroundTactics.h): role ranks [0, takers) take orbs - the first `west` of them the west
-    // orbs (blue, green; x 1716), the rest the east orbs (purple, orange; x 1850) - [takers, takers + centre) hold the
-    // centre with our carriers, the rest hunt the enemy carriers. BALANCED is the pre-split behaviour (roles 0-4 orbs,
-    // 5-6 escort first, 7-9 hunt first) with the takers now spread 3:2 over both sides.
-    struct TokPlan
-    {
-        uint8 takers;
-        uint8 west;
-        uint8 centre;
-        char const* name;
-    };
-
-    TokPlan const TOK_PLANS[TOK_STRATEGY_MAX] = {
-        {5, 3, 2, "balanced"},  // 3 west, 2 east, 2 centre, 3 hunt
-        {5, 4, 2, "west"},      // 4 west, 1 east
-        {5, 1, 2, "east"},      // 1 west, 4 east
-        {7, 4, 1, "orbs"},      // 4 west, 3 east, 1 centre, 2 hunt
-        {3, 2, 4, "centre"},    // 2 west, 1 east, 4 centre, 3 hunt
-        {3, 1, 2, "hunt"}};     // 1 west, 2 east, 2 centre, 5 hunt
-
-    enum TokGroup : uint8
-    {
-        TOK_GROUP_WEST = 0,
-        TOK_GROUP_EAST = 1,
-        TOK_GROUP_CENTRE = 2,
-        TOK_GROUP_HUNT = 3
-    };
-
-    char const* const TOK_GROUP_NAMES[4] = {"orb-west", "orb-east", "centre", "hunt"};
-
-    TokPlan const& PlanOf(uint8 strategy)
-    {
-        return TOK_PLANS[strategy < TOK_STRATEGY_MAX ? strategy : uint8(TOK_STRATEGY_BALANCED)];
-    }
-
-    TokGroup GroupOf(TokPlan const& plan, uint8 role)
-    {
-        if (role < plan.takers)
-            return role < plan.west ? TOK_GROUP_WEST : TOK_GROUP_EAST;
-
-        return role < plan.takers + plan.centre ? TOK_GROUP_CENTRE : TOK_GROUP_HUNT;
-    }
 
     BattlegroundVOP* AsTok(Battleground* bg)
     {
@@ -227,6 +181,24 @@ namespace
         }
 #endif
     }
+
+    // Each bot's opening role, set where the objective is chosen and read at the orb (both on the bot's map thread,
+    // but different bots of one match can run on different threads).
+    std::mutex s_tokRoleLock;
+    std::map<BotGuid, TokPlan::Role> s_tokRole;
+
+    void RememberTokRole(BotGuid guid, TokPlan::Role role)
+    {
+        std::lock_guard<std::mutex> guard(s_tokRoleLock);
+        s_tokRole[guid] = role;
+    }
+
+    bool IsTokPickup(BotGuid guid)
+    {
+        std::lock_guard<std::mutex> guard(s_tokRoleLock);
+        auto const found = s_tokRole.find(guid);
+        return found != s_tokRole.end() && found->second == TokPlan::Role::PICKUP;
+    }
 }
 
 bool BGTactics::isCarryingTOK(Battleground* bg)
@@ -266,79 +238,141 @@ bool BGTactics::selectObjectiveTOK(Battleground* bg)
         posMap["bg objective"] = pos;
     };
 
-    // A carrier holds the temple centre: the orb scores every 5 s for as long as it is held and the
-    // middle zone pays most (core UpdateScore 3/4/5). A small stable offset per bot (from its guid)
-    // keeps two carriers from stacking on one spot without re-rolling every tick.
+    TeamId const myTeam = BgTeamIdOf(bot);
+    std::vector<Player*> friends, enemies, bots;
+    for (auto const& entry : bg->GetPlayers())
+        if (Player* p = ObjectAccessor::FindPlayer(entry.first))
+            if (p->IsInWorld() && p->IsAlive() && p->GetMapId() == bot->GetMapId())
+            {
+                if (BgTeamIdOf(p) == myTeam)
+                {
+                    friends.push_back(p);
+                    if (p->GetSession() && p->GetSession()->IsBot()) bots.push_back(p);
+                }
+                else enemies.push_back(p);
+            }
+    auto seen = [&](Player* enemy)
+    {
+        return AbLogic::SeenByTeam(enemy->IsAlive(), friends,
+            [](Player* p) { return p->IsAlive(); },
+            [enemy](Player* p) { return AbLogic::WithinSight(enemy->GetPositionX(), enemy->GetPositionY(), enemy->GetPositionZ(),
+                                                              p->GetPositionX(), p->GetPositionY(), p->GetPositionZ()); },
+            [enemy](Player* p) { return p->CanSeeOrDetect(enemy); });
+    };
+    // Use the shared election policy: humans count in the side but cannot lead.
+    std::vector<BgLeader::Candidate> candidates;
+    for (Player* p : friends)
+    {
+        bool const isBot = p->GetSession() && p->GetSession()->IsBot();
+        candidates.push_back({p->GetGUIDLow(), isBot ? BotSkill::TierOf(p) : BotSkillMath::Tier::EXPERT,
+                              uint8(p->getLevel()), isBot, true, true});
+    }
+    {
+        static std::mutex leaderLock;
+        static std::map<std::pair<uint32, uint32>, BgLeader::Election> elections;
+        std::lock_guard<std::mutex> guard(leaderLock);
+        BgLeader::Election& election = elections[std::make_pair(bg->GetInstanceID(), uint32(myTeam))];
+        BgLeader::Change const change = BgLeader::Elect(election, candidates, getMSTime(), bg->GetStatus() == STATUS_IN_PROGRESS);
+        if (change != BgLeader::Change::NONE)
+            SF_LOG_DEBUG("playerbots", "[BGTOK] leader team=%u leader=%u epoch=%u instance=%u",
+                         uint32(myTeam), election.leader, election.epoch, bg->GetInstanceID());
+    }
+    unsigned support = 0;
+    for (Player* p : friends)
+        if (p != bot && bot->GetDistance(p) <= TokPlan::SUPPORT_RADIUS) ++support;
+    unsigned const threats = TokPlan::CountSeen(enemies, [&](Player* p) { return seen(p) && bot->GetDistance(p) <= TokPlan::SUPPORT_RADIUS; });
+    struct ZoneState { uint32 instance = 0; uint32 changed = 0; TokPlan::Zone zone = TokPlan::Zone::RING; };
+    static std::mutex lock;
+    static std::map<BotGuid, ZoneState> states;
     if (isCarryingTOK(bg))
     {
-        uint32 const n = uint32(bot->GetGUIDLow() % 8);
-        float const ang = float(n) * (6.2831853f / 8.0f);
-        setObjective(TOK_CENTRE_X + 3.0f * std::cos(ang), TOK_CENTRE_Y + 3.0f * std::sin(ang), TOK_CENTRE_Z);
+        std::lock_guard<std::mutex> guard(lock);
+        uint32 const now = getMSTime();
+        ZoneState& state = states[bot->GetGUID()];
+        if (state.instance != bg->GetInstanceID()) { state = ZoneState(); state.instance = bg->GetInstanceID(); state.changed = now; }
+        TokPlan::Zone const zone = TokPlan::CarrierZone(state.zone, bot->GetHealthPct(), support, threats,
+                                                        support > 0, getMSTimeDiff(state.changed, now));
+        if (zone != state.zone) { state.zone = zone; state.changed = now; }
+        if (zone == TokPlan::Zone::CENTRE)
+            setObjective(TOK_CENTRE_X, TOK_CENTRE_Y, TOK_CENTRE_Z);
+        else
+        {
+            // Use an existing ground waypoint on the friendly approach; exact scoring boxes need live validation.
+            uint8 const orb = myTeam == TEAM_ALLIANCE ? 0 : 2;
+            setObjective(TOK_ORB_X[orb], TOK_ORB_Y[orb], TOK_ORB_GROUND_Z);
+        }
         return true;
     }
-
-    uint8 const role = context->GetValue<uint32>("bg role")->Get();
-    TeamId const myTeam = BgTeamIdOf(bot);
-    TokPlan const& plan = PlanOf(GetBotStrategyForTeam(bg, myTeam));
-    TokGroup const group = GroupOf(plan, role);
     {
-        static thread_local std::map<BotGuid, uint32> s_planLog;
-        uint32& last = s_planLog[bot->GetGUID()];
+        std::lock_guard<std::mutex> guard(lock);
+        states.erase(bot->GetGUID());
+    }
+
+    std::sort(bots.begin(), bots.end(), [](Player* a, Player* b) { return a->GetGUIDLow() < b->GetGUIDLow(); });
+    unsigned index = 0;
+    while (index < bots.size() && bots[index] != bot) ++index;
+    TokPlan::Split const split = TokPlan::Opening(friends.size());
+    TokPlan::Role const role = TokPlan::RoleAt(split, index);
+    RememberTokRole(bot->GetGUID(), role);
+    bool orbFree[BG_TOK_MAX_ORBS] = {};
+    for (uint8 i = 0; i < BG_TOK_MAX_ORBS; ++i)
+        if (GameObject* go = bg->GetBGObject(BG_VOP_OBJECT_ORB_1 + i))
+            orbFree[i] = go->isSpawned();
+
+    // Assign distinct free stands greedily, with distance and GUID tie breaks.
+    int assigned = -1;
+    bool reserved[BG_TOK_MAX_ORBS] = {};
+    unsigned assignedCount = 0;
+    for (unsigned n = 0; n < bots.size() && assignedCount < split.pickup; ++n)
+    {
+        bool carrying = false;
+        uint32 const auras[] = { BG_VOP_SPELL_ORB_PICKED_UP_1, BG_VOP_SPELL_ORB_PICKED_UP_2,
+                                 BG_VOP_SPELL_ORB_PICKED_UP_3, BG_VOP_SPELL_ORB_PICKED_UP_4 };
+        for (uint32 aura : auras) if (bots[n]->HasAura(aura)) carrying = true;
+        if (carrying) continue;
+        int best = -1; float distance = 1.0e9f;
+        for (uint8 i = 0; i < BG_TOK_MAX_ORBS; ++i)
+            if (orbFree[i] && !reserved[i])
+            {
+                float const d = sServerFacade->GetDistance2d(bots[n], TOK_ORB_X[i], TOK_ORB_Y[i]);
+                if (d < distance) { best = i; distance = d; }
+            }
+        if (best >= 0) { reserved[best] = true; ++assignedCount; if (bots[n] == bot) assigned = best; }
+    }
+    Player* nearestFriend = nullptr;
+    Player* nearestEnemy = nullptr;
+    float friendDist = 1.0e9f, enemyDist = 1.0e9f;
+    uint32 const orbAuras[BG_TOK_MAX_ORBS] = {BG_VOP_SPELL_ORB_PICKED_UP_1, BG_VOP_SPELL_ORB_PICKED_UP_2,
+                                               BG_VOP_SPELL_ORB_PICKED_UP_3, BG_VOP_SPELL_ORB_PICKED_UP_4};
+    for (Player* p : friends)
+        if (p != bot)
+            for (uint32 aura : orbAuras)
+                if (p->HasAura(aura) && bot->GetDistance(p) < friendDist)
+                    { nearestFriend = p; friendDist = bot->GetDistance(p); }
+    for (Player* p : enemies)
+        if (seen(p))
+            for (uint32 aura : orbAuras)
+                if (p->HasAura(aura) && bot->GetDistance(p) < enemyDist)
+                    { nearestEnemy = p; enemyDist = bot->GetDistance(p); }
+    {
+        static thread_local std::map<BotGuid, uint32> logged;
+        uint32& last = logged[bot->GetGUID()];
         if (!last || getMSTimeDiff(last, getMSTime()) >= 30000)
         {
             last = getMSTime();
-            SF_LOG_DEBUG("playerbots", "[BGTOK] plan bot=%s team=%u strat=%s role=%u group=%s instance=%u",
-                         bot->GetName().c_str(), uint32(myTeam), plan.name, uint32(role), TOK_GROUP_NAMES[group],
-                         bg->GetInstanceID());
+            SF_LOG_DEBUG("playerbots", "[BGTOK] plan bot=%s team=%u role=%u orb=%d instance=%u",
+                         bot->GetName().c_str(), uint32(myTeam), unsigned(role), assigned, bg->GetInstanceID());
         }
     }
-
-    // PORT: SkyFire keeps VOP orb holders private; reconstruct them from pickup auras.
-    uint32 const orbAuras[BG_TOK_MAX_ORBS] = {BG_VOP_SPELL_ORB_PICKED_UP_3, BG_VOP_SPELL_ORB_PICKED_UP_2,
-                                               BG_VOP_SPELL_ORB_PICKED_UP_4, BG_VOP_SPELL_ORB_PICKED_UP_1};
-    std::vector<BotGuid> pickers(BG_TOK_MAX_ORBS);
-    for (auto const& entry : bg->GetPlayers())
-        if (Player* player = ObjectAccessor::FindPlayer(entry.first))
-            for (uint8 i = 0; i < BG_TOK_MAX_ORBS; ++i)
-                if (player->HasAura(orbAuras[i]))
-                    pickers[i] = player->GetGUID();
-    Player* nearestFriend = nullptr;
-    Player* nearestEnemy = nullptr;
-    float friendDist = 1.0e9f;
-    float enemyDist = 1.0e9f;
-    bool orbFree[BG_TOK_MAX_ORBS] = {};
-    for (uint8 i = 0; i < BG_TOK_MAX_ORBS && i < pickers.size(); ++i)
+    if (assigned >= 0)
     {
-        if (pickers[i].IsEmpty())
-        {
-            orbFree[i] = true;
-            continue;
-        }
-        Player* holder = ObjectAccessor::FindPlayer(pickers[i]);
-        if (!holder || holder == bot || !holder->IsAlive() || holder->GetMapId() != bot->GetMapId())
-            continue;
-
-        float const d = bot->GetDistance(holder);
-        if (BgTeamIdOf(holder) == myTeam)
-        {
-            if (d < friendDist)
-            {
-                friendDist = d;
-                nearestFriend = holder;
-            }
-        }
-        else if (d < enemyDist)
-        {
-            enemyDist = d;
-            nearestEnemy = holder;
-        }
+        setObjective(TOK_ORB_X[assigned], TOK_ORB_Y[assigned], TOK_ORB_GROUND_Z);
+        return true;
     }
 
-    // Nearest free orb overall, and nearest on the side of the bot's group (TOK_PLANS; west = x below the centre).
+    // A bot without a pickup reservation can take a free orb when no carrier needs it.
     int nearestOrb = -1;
-    int sideOrb = -1;
     float orbDist = 1.0e9f;
-    float sideDist = 1.0e9f;
     for (uint8 i = 0; i < BG_TOK_MAX_ORBS; ++i)
     {
         if (!orbFree[i])
@@ -349,28 +383,12 @@ bool BGTactics::selectObjectiveTOK(Battleground* bg)
             orbDist = d;
             nearestOrb = i;
         }
-        if ((group == TOK_GROUP_WEST) == (TOK_ORB_X[i] < TOK_CENTRE_X) && d < sideDist)
-        {
-            sideDist = d;
-            sideOrb = i;
-        }
-    }
-
-    // Orb takers (a holder scores on its own, so every free orb is worth taking): their side's orb first, then any.
-    if (group == TOK_GROUP_WEST || group == TOK_GROUP_EAST)
-    {
-        int const orb = sideOrb >= 0 ? sideOrb : nearestOrb;
-        if (orb >= 0)
-        {
-            setObjective(TOK_ORB_X[orb], TOK_ORB_Y[orb], TOK_ORB_GROUND_Z);
-            return true;
-        }
     }
 
     // The centre group escorts an own carrier (carriers hold the centre) and otherwise holds the scoring pit itself;
     // takers without a free orb and hunters go for an enemy carrier first, then escort (AC WSG case: escort team FC /
     // hunt enemy FC, 2300-2311).
-    if (group == TOK_GROUP_CENTRE)
+    if (role == TokPlan::Role::SUPPORT)
     {
         if (nearestFriend)
             setObjective(nearestFriend->GetPositionX(), nearestFriend->GetPositionY(), nearestFriend->GetPositionZ());
@@ -459,10 +477,9 @@ bool BGTactics::atObjectiveTOK(Battleground* bg)
         return true;
     }
 
-    // Walk the last stretch to an orb only for the orb takers of this match's plan (TOK_PLANS); the rest keep
-    // their centre / hunt objective and pick one up only if they happen to stand next to it.
-    uint8 const role = context->GetValue<uint32>("bg role")->Get();
-    if (role >= PlanOf(GetBotStrategyForTeam(bg, BgTeamIdOf(bot))).takers || best > 50.0f)
+    // Walk the last stretch to an orb only for the opening's pickup bots; the rest keep their support or hunt
+    // objective and pick one up only if they happen to stand next to it.
+    if (!IsTokPickup(bot->GetGUID()) || best > 50.0f)
         return false;
 
     // AC atFlag AB branch: engage a nearby enemy player before going for the objective.

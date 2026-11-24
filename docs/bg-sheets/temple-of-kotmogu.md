@@ -1,4 +1,4 @@
-Approved 2026-11-24 (owner answers in section 15), implementation pending
+Approved 2026-11-24 (owner answers in section 15); partial implementation, live validation pending
 
 # Temple of Kotmogu playbook
 
@@ -109,6 +109,10 @@ These are tactical assignments, not guarantees that particular spells work with 
 Core: interact with free orbs, protect a carrier, pursue seen objectives, return from graveyard and respect game rules. Good: threat-aware positioning, role replacement and coordinated pursuit. Expert: read aura risk, coordinate control and burst, anticipate a returned pedestal and change zone with hysteresis. Casuals follow core rules with delayed reactions and some temporary role drift, not fabricated knowledge. Target mix approximately 10 percent expert, 60 percent good and 30 percent casual per the sheet method; the PvP design decision targets 75, 55 and 35 percent wins against an average human by tier, requiring measurement rather than a guarantee.
 
 ## 12. Bots today and gaps
+
+Implementation update 2026-11-24: the map now checks enemy visibility through living teammates before reading enemy carrier auras or positions, uses spawned orb objects for availability, and assigns distinct free stands to pickup bots. A deterministic scaled split, shared bot leader election, and a carrier zone policy are present. The policy uses two nearby allies within 40 yards as provisional support, health thresholds of 40 and 65 percent and a provisional 10 second dwell. The retreat waypoint and scoring zone need live validation. No deliberate orb drop was added.
+
+This is a partial implementation: leader stance decisions, score projection, human and bot call-outs, expiring reports, tier response, reliable path failure recovery, and live core and data validation remain open. Humans count toward side size and are not assigned roles; allocation does not infer what jobs humans will perform. The table below records the pre-change assessment.
 
 | Topic | Evidence and assessment |
 | --- | --- |
