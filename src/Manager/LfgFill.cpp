@@ -77,6 +77,8 @@ namespace
         bool enable = true;
         uint32 intervalSeconds = 10;
         uint32 levelWindow = 6;
+        // A filled tank is at most this many levels under the requesting player (LfgFillPolicy::TankLevelFloor).
+        uint32 tankLevelBelowPlayer = 1;
         uint32 maxJoinsPerPass = 5;
         uint32 queueTimeoutSeconds = 10 * SECONDS_PER_MINUTE;
         bool tankSwitch = true;
@@ -110,6 +112,7 @@ namespace
         s.enable = sConfigMgr->GetBoolDefault("AiPlayerbot.LfgFill.Enable", true);
         s.intervalSeconds = uint32(std::max(2, sConfigMgr->GetIntDefault("AiPlayerbot.LfgFill.IntervalSeconds", 10)));
         s.levelWindow = uint32(std::max(0, sConfigMgr->GetIntDefault("AiPlayerbot.LfgFill.LevelWindow", 6)));
+        s.tankLevelBelowPlayer = uint32(std::max(0, sConfigMgr->GetIntDefault("AiPlayerbot.LfgFill.TankLevelBelowPlayer", 1)));
         s.maxJoinsPerPass = uint32(std::max(1, sConfigMgr->GetIntDefault("AiPlayerbot.LfgFill.MaxJoinsPerPass", 5)));
         s.queueTimeoutSeconds =
             uint32(std::max(1, sConfigMgr->GetIntDefault("AiPlayerbot.LfgFill.QueueTimeoutMinutes", 10))) * SECONDS_PER_MINUTE;
@@ -426,7 +429,7 @@ namespace
     // near the requester's level so a random pick is not a level 50 in a level 20's run. One random dungeon alone, or
     // specific dungeons of one category, as 5.4.8 JoinLfg accepts.
     LfgDungeonSet DungeonsFor(Player* bot, Request const& request, Settings const& settings, bool anyLevel,
-                              std::vector<LfgAnyLevel::Request> const& anyLevelRequests)
+                              std::vector<LfgAnyLevel::Request> const& anyLevelRequests, int role = -1)
     {
         LfgDungeonSet out;
         uint8 category = 0;
@@ -451,6 +454,11 @@ namespace
             // (a scaled queue) takes the bots of the range.
             if (InLevelRange(*dungeon, request.level) &&
                 uint32(std::abs(int32(botLevel) - int32(request.level))) > settings.levelWindow)
+                continue;
+
+            // Same scope as the window: a requester above the range gets the bots of the range, whatever their level.
+            if (role == ROLE_TANK && InLevelRange(*dungeon, request.level) &&
+                !LfgFillPolicy::TankLevelOk(botLevel, request.level, settings.tankLevelBelowPlayer, uint32(dungeon->minlevel)))
                 continue;
 
             if (!out.empty() && (dungeon->type == lfg::LFG_TYPE_RANDOM || haveRandom || dungeon->category != category))
@@ -626,7 +634,7 @@ namespace
                 if (role < 0 || !missing[role] || (onlyRole >= 0 && role != onlyRole))
                     continue;
 
-                LfgDungeonSet const dungeons = DungeonsFor(bot, request, settings, anyLevel, anyLevelRequests);
+                LfgDungeonSet const dungeons = DungeonsFor(bot, request, settings, anyLevel, anyLevelRequests, role);
                 if (dungeons.empty())
                     continue;
 
@@ -697,7 +705,7 @@ namespace
                     RoleIndexOf(LfgGetBotRoles(bot)) != ROLE_DAMAGE)
                     continue;
 
-                LfgDungeonSet const dungeons = DungeonsFor(bot, request, settings, anyLevel, anyLevelRequests);
+                LfgDungeonSet const dungeons = DungeonsFor(bot, request, settings, anyLevel, anyLevelRequests, ROLE_TANK);
                 if (dungeons.empty())
                     continue;
 
@@ -748,7 +756,7 @@ namespace
                 bool const otherwiseFree = HoldOf(bot, now, supply, drink, true) == LfgFillPolicy::Hold::Free;
                 if (!LfgFillPolicy::PartyEligible(true, allBots, (group->isLFGGroup() || group->isBGGroup() || group->isRaidGroup()), otherwiseFree))
                     continue;
-                LfgDungeonSet const dungeons = DungeonsFor(bot, request, settings, anyLevel, anyLevelRequests);
+                LfgDungeonSet const dungeons = DungeonsFor(bot, request, settings, anyLevel, anyLevelRequests, role);
                 if (dungeons.empty())
                     continue;
                 Player* leader = ObjectAccessor::FindPlayer(group->GetLeaderGUID());

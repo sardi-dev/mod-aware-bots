@@ -905,6 +905,13 @@ AiPlayerbot.LfgFill.LevelWindow = 6
 AiPlayerbot.LfgFill.MaxJoinsPerPass = 5
 AiPlayerbot.LfgFill.QueueTimeoutMinutes = 10
 
+# A filled tank must be at least the requesting player's level minus this many levels (and never under the dungeon's minimum
+# level), so a tank does not face mobs of the player's level several levels above its own; healers and damage dealers keep the
+# LevelWindow above. Applies while the player is inside the dungeon's level range. 0 = the tank is at least the player's level,
+# a large value (like LevelWindow) = no extra rule for tanks.
+# Default: 1
+AiPlayerbot.LfgFill.TankLevelBelowPlayer = 1
+
 # Beyond AC: when a finder queue lacks a tank and no free bot of a tank spec fits, a free damage bot of a class that can tank
 # (warrior, paladin, death knight, druid, monk) takes its tank specialization and queues as the tank, as a hybrid bot does for
 # a missing healer. The bot keeps the new spec (it is re-geared like the healer switch). 0 = a missing tank stays missing.

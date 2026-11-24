@@ -93,3 +93,29 @@ TEST(lfg_proposal_is_accepted_in_a_fight_and_declined_only_when_dead)
     CHECK(LfgFillPolicy::AcceptsProposal(false));
     CHECK(!LfgFillPolicy::AcceptsProposal(true));
 }
+
+TEST(lfg_fill_tank_floor_is_the_player_level_minus_the_margin)
+{
+    // Stockade proof run 2026-11-23: a level 21 tank for a level 24 player.
+    CHECK(LfgFillPolicy::TankLevelFloor(24, 1, 20) == 23);
+    CHECK(!LfgFillPolicy::TankLevelOk(21, 24, 1, 20));
+    CHECK(!LfgFillPolicy::TankLevelOk(22, 24, 1, 20));
+    CHECK(LfgFillPolicy::TankLevelOk(23, 24, 1, 20));
+    CHECK(LfgFillPolicy::TankLevelOk(24, 24, 1, 20));
+    CHECK(LfgFillPolicy::TankLevelOk(27, 24, 1, 20));
+}
+
+TEST(lfg_fill_tank_floor_never_goes_under_the_dungeon_minimum)
+{
+    CHECK(LfgFillPolicy::TankLevelFloor(22, 1, 22) == 22);
+    CHECK(!LfgFillPolicy::TankLevelOk(21, 22, 1, 22));
+    CHECK(LfgFillPolicy::TankLevelFloor(20, 5, 22) == 22);
+}
+
+TEST(lfg_fill_tank_floor_margin_is_configurable_and_safe_at_the_edges)
+{
+    CHECK(LfgFillPolicy::TankLevelFloor(24, 0, 20) == 24);
+    CHECK(LfgFillPolicy::TankLevelFloor(24, 6, 20) == 20);
+    CHECK(LfgFillPolicy::TankLevelFloor(3, 10, 0) == 0);
+    CHECK(LfgFillPolicy::TankLevelOk(1, 3, 10, 0));
+}

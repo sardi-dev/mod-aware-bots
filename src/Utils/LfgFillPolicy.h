@@ -115,6 +115,21 @@ constexpr bool InReach(uint32_t botLevel, uint32_t playerLevel, uint32_t window,
     return botLevel >= minLevel && (botLevel > playerLevel ? botLevel - playerLevel : playerLevel - botLevel) <= window;
 }
 
+// Stockade proof run 2026-11-23: the finder filled a level 21 tank for a level 24 player, the pack mobs were level 23 to 24,
+// and one pull chained 14 mobs and wiped. A tank takes the hits of mobs that level up to the player's, so a filled tank must
+// not trail the player by more than a few levels; healers and damage dealers keep the plain level window. The floor is the
+// player's level minus `below`, and never under the dungeon's own minimum level.
+constexpr uint32_t TankLevelFloor(uint32_t playerLevel, uint32_t below, uint32_t dungeonMinLevel)
+{
+    uint32_t const wanted = playerLevel > below ? playerLevel - below : 0;
+    return wanted > dungeonMinLevel ? wanted : dungeonMinLevel;
+}
+
+constexpr bool TankLevelOk(uint32_t botLevel, uint32_t playerLevel, uint32_t below, uint32_t dungeonMinLevel)
+{
+    return botLevel >= TankLevelFloor(playerLevel, below, dungeonMinLevel);
+}
+
 // Night proof runs 2026-11-16 (Shadowfang Keep): two of four filled bots were in a fight a few seconds after they queued
 // and turned the proposal down, which sends everyone back to the queue and asks the player to accept again (the run found
 // no group in 2 min). A player in a fight accepts too and is ported when the fight is over: the core only refuses the

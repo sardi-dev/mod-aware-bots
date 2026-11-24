@@ -7,6 +7,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- **The finder fills a tank no more than a level under the player** (2026-11-24)
+  - Summary: `LfgFill` (`DungeonsFor`) now requires a tank it queues, by native spec, party bot or tank switch, to be at least the requesting player's level minus `AiPlayerbot.LfgFill.TankLevelBelowPlayer` (default 1) and never under the dungeon's minimum level (`LfgFillPolicy::TankLevelFloor`, `TankLevelOk`, three unit tests). Healers and damage dealers keep `LevelWindow`. The rule applies while the player is inside the dungeon's level range, like the window; the highest level of a premade group counts as the player's level.
+  - Why: In the Stockade the finder filled a level 21 tank for a level 24 player with mobs at 23 to 24, and one pull chained 14 mobs and wiped (night proof run 2026-11-23).
 - **The random password setting is read once** (2026-11-24)
   - Summary: `PlayerbotAIConfig.cpp` read `AiPlayerbot.RandomBotRandomPassword` twice in a row; the second read is gone.
   - Why: Leftover of the release cleanup; harmless, but it reads as a mistake.
