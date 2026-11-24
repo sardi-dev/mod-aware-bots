@@ -7,6 +7,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Temple of Kotmogu playbook, draft** (2026-11-24)
+  - Summary: `docs/bg-sheets/temple-of-kotmogu.md`: map facts from the core and the patches with sources, roles by side
+    size, opening and mid-game rules, call-outs, class jobs, failure modes, the gap list, tests and the open questions.
+    Not approved yet; no code changes.
+  - Why: Roadmap 0.2 needs a playbook for every battleground before the bots' Kotmogu play is built and proven.
 - **Bank errands that deposit, part 1** (2026-11-24)
   - Summary: A random bot on its bank errand now deposits whole stacks at the banker: profession materials it keeps
     for later (within the existing keep caps) and rare or better items it neither wears nor sells. Quest items, bags,
