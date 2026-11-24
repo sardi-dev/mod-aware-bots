@@ -1,4 +1,4 @@
-Draft 2026-11-24, not approved
+Approved 2026-11-24 (owner answers in section 15), implementation pending
 
 # Temple of Kotmogu playbook
 
@@ -145,6 +145,14 @@ Run a human queue with the headless client and appropriate seeded participants o
 4. **Information policy:** (a) Recommended: replace global enemy carrier position and aura scans with personal sight and expiring visible call-outs, retaining only genuinely public objective state. (b) Keep the global scan. Confirm which carrier-position UI updates count as public information before using them tactically.
 5. **Orb-rule deployment and values:** (a) Recommended: retain the checked-in rework for the playbook and verify deployed core, SQL bindings, trigger and spell data before any fork change. (b) Revisit the rules against independent era evidence first. No guide versus core disagreement is established in this draft.
 6. **Testing:** (a) Recommended: pure scenarios first, then a human-queue test with seeded participants if supported. (b) Wait for natural queues. Confirm permitted test accounts and applicable bracket before live work.
+
+**Owner answers (2026-11-24):**
+- 1 (a): carriers go to the center when supported, retreat on seen danger and come back with hysteresis.
+- 3 (a): opening 4 pickups / 3 support / 2 hunters / 1 flexible for a full side, scaled down for smaller sides and humans.
+- 4 (a): seen-only intel for enemy carriers; public map state stays allowed.
+- 2 (a) and 6 (a): no deliberate drops until the aura data is checked; pure tests first, then a seeded bot-only
+  match, then a human queue test with the owner.
+- 5: no fork change is proposed; the deployed rework is verified during the live test.
 
 ## 16. Decision points for the leader bot
 
