@@ -19,6 +19,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace WsgPlanRec
@@ -172,6 +173,7 @@ struct Record : BgPlan::RecordBase
     uint32 bothHeldStartMs = 0;
     uint32 bothHeldMs = 0;
     std::vector<Pending> pending;
+    std::unordered_set<uint32> strikeRunLogged;
     TeamPlan team[2];
 };
 }  // namespace WsgPlanRec

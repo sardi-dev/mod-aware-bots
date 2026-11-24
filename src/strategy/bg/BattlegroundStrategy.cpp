@@ -85,8 +85,8 @@ void WarsongStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
     triggers.push_back(new TriggerNode(
         "player has flag", NextAction::array(0, new NextAction("bg move to objective", ACTION_EMERGENCY), nullptr)));
 
-    // BT-705 (Twin Peaks only, the trigger is silent elsewhere): a taker on the lane detour walks on while it is in combat,
-    // like a carrier, so the detour can lead it out of the middle brawl.
+    // A lane detour or strike run uses the carrier movement action in combat. While already moving,
+    // that action yields, so the combat engine can still use instant casts.
     triggers.push_back(new TriggerNode(
         "bg detour due", NextAction::array(0, new NextAction("bg move to objective", ACTION_EMERGENCY), nullptr)));
 

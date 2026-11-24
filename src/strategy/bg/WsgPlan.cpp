@@ -1785,6 +1785,38 @@ bool DetourDue(Battleground* bg, Player* bot)
     return me && TpMidLock::DetourOverridesCombat(me->viaLane, me->alive, bot->GetHealthPct());
 }
 
+bool StrikeRunDue(Battleground* bg, Player* bot)
+{
+    if (!CommonGuards(bg, bot) || !bot->IsInCombat())
+        return false;
+
+    std::lock_guard<std::mutex> guard(g_lock);
+    auto const record = g_records.find(bg->GetInstanceID());
+    if (record == g_records.end())
+        return false;
+
+    uint32 const t = TeamIndexOf(bot);
+    Member* me = FindMember(record->second.team[t], bot->GetGUIDLow());
+    if (!me)
+        return false;
+
+    Pos const stand = MapOf(bg->GetMapId())->sides[1 - t].standWalk;
+    uint32 meleeAttackers = 0;
+    for (Unit* attacker : bot->getAttackers())
+        if (attacker && attacker->IsInWorld() && attacker->IsAlive() && attacker->GetVictim() == bot &&
+            attacker->IsWithinMeleeRange(bot))
+            ++meleeAttackers;
+
+    float const distance = Dist2d(bot->GetPositionX(), bot->GetPositionY(), stand.x, stand.y);
+    bool const due = StrikeRunOverridesCombat(me->role, me->kind == Kind::TAKE_ENEMY_FLAG,
+        bot->IsAlive(), bot->GetHealthPct(), distance,
+        bot->HasUnitState(UNIT_STATE_ROOT | UNIT_STATE_CONTROLLED), meleeAttackers, me->tier);
+    if (due && record->second.strikeRunLogged.insert(bot->GetGUIDLow()).second)
+        SF_LOG_DEBUG("playerbots", "[BGWSG] %s strike run overrides combat role=%s hp=%.1f stand=%.1f melee=%u",
+                     bot->GetName().c_str(), RoleName(me->role), bot->GetHealthPct(), distance, meleeAttackers);
+    return due;
+}
+
 bool MayTakeEnemyBaseFlag(Battleground* bg, Player* bot)
 {
     if (!CommonGuards(bg, bot))

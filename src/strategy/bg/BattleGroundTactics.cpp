@@ -2550,10 +2550,11 @@ bool BGTactics::Execute(Event /*event*/)
         if (CarrierHoldsToFight(bot, botAI, bg, PlayerHasFlag::IsCapturingFlag(bot) || isCarryingObjective(bg)))
             return false;
 
-        if (bot->isMoving())
-            return false;
-
-        if (!bot->IsStopped())
+        // Replace an active combat chase with the strike objective. Once on a point move, yield
+        // while moving so the combat engine still gets opportunities to cast instant spells.
+        bool const strikeChasing = bot->GetMotionMaster()->GetCurrentMovementGeneratorType() == CHASE_MOTION_TYPE &&
+                                   WsgPlan::StrikeRunDue(bg, bot);
+        if (!strikeChasing && (bot->isMoving() || !bot->IsStopped()))
             return false;
 
         switch (bot->GetMotionMaster()->GetCurrentMovementGeneratorType())
@@ -2589,8 +2590,8 @@ bool BGTactics::Execute(Event /*event*/)
         // keeps driving to it; its weapons still fire on the way
         bool const siegeDrive = botAI->IsInVehicle(true) &&
                                 context->GetValue<PositionMap&>("position")->Get()["bg siege"].isSet();
-        // BT-705: a taker on the Twin Peaks lane detour walks on in combat, like a carrier.
-        if (inCombat && !siegeDrive && !PlayerHasFlag::IsCapturingFlag(bot) && !WsgPlan::DetourDue(bg, bot))
+        // A lane detour or strike run walks on in combat, like a carrier.
+        if (inCombat && !siegeDrive && !PlayerHasFlag::IsCapturingFlag(bot) && !WsgPlan::DetourDue(bg, bot) && !WsgPlan::StrikeRunDue(bg, bot))
         {
             // bot->GetMotionMaster()->MovementExpired();
             return false;
@@ -4165,7 +4166,8 @@ bool BGTactics::moveToObjectiveWp(BattleBotPath* const& currentPath, uint32 curr
     // NOTE: can't use IsInCombat() when in vehicle as player is stuck in combat forever while in vehicle (ac bug?)
     bool inCombat = bot->GetVehicle() ? (bool)AI_VALUE(Unit*, "enemy player target") : bot->IsInCombat();
     if (currentPoint == lastPointInPath ||
-        (inCombat && !PlayerHasFlag::IsCapturingFlag(bot) && !WsgPlan::DetourDue(bot->GetBattleground(), bot)) || !bot->IsAlive())
+        (inCombat && !PlayerHasFlag::IsCapturingFlag(bot) && !WsgPlan::DetourDue(bot->GetBattleground(), bot) &&
+         !WsgPlan::StrikeRunDue(bot->GetBattleground(), bot)) || !bot->IsAlive())
     {
         // Path is over.
         // std::ostringstream out;
@@ -5237,8 +5239,8 @@ bool BGTactics::FightPathAttacker(Battleground* bg)
     if (!bot->IsAlive() || bot->GetVehicle() || botAI->GetState() == BOT_STATE_COMBAT)
         return false;
 
-    // BT-705: a taker on the Twin Peaks lane detour does not stop to fight on the way.
-    if (WsgPlan::DetourDue(bg, bot))
+    // Lane detours and strike runs keep moving rather than engage a path attacker.
+    if (WsgPlan::DetourDue(bg, bot) || WsgPlan::StrikeRunDue(bg, bot))
         return false;
 
     if (!bot->IsInCombat() && bot->getAttackers().empty())

@@ -216,7 +216,7 @@ bool PlayerHasFlag::IsCapturingFlag(Player* bot)
 bool PlayerOnLaneDetour::IsActive()
 {
     Battleground* bg = bot->GetBattleground();
-    return bg && bot->IsAlive() && WsgPlan::DetourDue(bg, bot);
+    return bg && bot->IsAlive() && (WsgPlan::DetourDue(bg, bot) || WsgPlan::StrikeRunDue(bg, bot));
 }
 
 bool EnemyFlagCarrierNear::IsActive()

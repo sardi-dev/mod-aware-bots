@@ -311,6 +311,8 @@ alone to the stand; skip the call-out; return a flag late; sit on the power-up s
 
 ## 12. Bots today (verified against the code), with gaps
 
+As built: strike roles on a take-flag objective continue in combat outside 30 yd of the enemy stand at 40 percent health or more (25 percent for casual), unless rooted or held by more than one melee attacker. At the stand they fight as usual. This also applies in Twin Peaks; live movement remains to be checked.
+
 | # | Rule or fact | Where | Status |
 |---|--------------|-------|--------|
 | 1 | The team split comes from `bg role` = `urand(0, 9)` per bot at queue accept, and every objective refresh re-rolls it with 2 percent odds (about once every 10 s: "often" is a 1-in-5 random trigger); a bot is a "defender" when `role < 3`. So the defender count per team varies 0 to 6 and drifts | `BattleGroundJoinAction.cpp:1009`; `BattleGroundTactics.cpp:2803`, `:4317-4344`, `:2537-2553` | **wrong** (no assigned roles) |

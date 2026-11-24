@@ -46,6 +46,14 @@ and this project follows [Semantic Versioning](https://semver.org/).
   - Why: Every feature the module has is named in the README, marked Ready or In development.
 
 ### Fixed
+- **The flag strike group walks through midfield fights to the enemy stand** (2026-11-24)
+  - Summary: In Warsong Gulch and Twin Peaks, the taker, backup and escort whose plan is to take the enemy flag keep
+    moving while in combat until they are within 30 yd of the enemy stand, as long as they are at 40 percent health or
+    more (25 percent for casual bots), not rooted or controlled, and held by no more than one melee attacker; they
+    still use instant casts on the way. At the stand they fight as before, until the taker has the flag.
+  - Why: In a 10 against 10 bot match the strike groups met in the middle, fought there for the whole match and never
+    reached a flag (0 to 0 after 25 minutes); the playbook keeps the strike group's fighting at the stand and leaves
+    the middle to the mid group.
 - **Arathi Basin bots count only the enemies their team can see** (2026-11-24)
   - Summary: The Arathi Basin plan counted enemies at each node from the whole roster. Like the other node maps, an
     enemy now counts only when a living teammate within 70 yd can see or detect it (stealth counts), or a call-out

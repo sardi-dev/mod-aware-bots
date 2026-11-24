@@ -169,6 +169,19 @@ inline bool IsStrikeRole(Role role)
     return role == Role::TAKER || role == Role::BACKUP || role == Role::ESCORT;
 }
 
+// The sheet sends the whole strike group to fight at the stand. Until then, keep moving unless
+// too hurt or held: a rooted bot cannot move, and multiple melee attackers can pin it down.
+constexpr float STRIKE_STAND_FIGHT_RADIUS = 30.0f;
+constexpr float STRIKE_MIN_HEALTH_PCT = 40.0f;
+constexpr float STRIKE_MIN_HEALTH_CASUAL_PCT = 25.0f;
+inline bool StrikeRunOverridesCombat(Role role, bool planIsTakeFlag, bool alive, float healthPct,
+                                     float distToEnemyStand, bool rooted, std::uint32_t meleeAttackersOnMe, Tier tier)
+{
+    return IsStrikeRole(role) && planIsTakeFlag && alive && !rooted && meleeAttackersOnMe <= 1 &&
+           healthPct >= (tier == Tier::CASUAL ? STRIKE_MIN_HEALTH_CASUAL_PCT : STRIKE_MIN_HEALTH_PCT) &&
+           distToEnemyStand > STRIKE_STAND_FIGHT_RADIUS;
+}
+
 struct RoleCounts
 {
     std::uint32_t n[ROLE_COUNT] = { 0, 0, 0, 0, 0 };
