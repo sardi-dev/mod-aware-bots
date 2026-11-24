@@ -686,3 +686,25 @@ bool BGTactics::atObjectiveDG(Battleground* bg)
     return true;
 }
 
+
+// Identify the stored node position for the optional idle diagnostic.
+int BGTactics::idleDgNode(float x, float y)
+{
+    for (uint8 i = 0; i < BG_DG_ALL_NODES_COUNT; ++i)
+    {
+        float const dx = x - DG_NODE_X[i], dy = y - DG_NODE_Y[i];
+        if (dx * dx + dy * dy <= 64.0f)
+            return i;
+    }
+    return -1;
+}
+
+bool BGTactics::idleDgGuard(Battleground* bg, int node)
+{
+    if (node < 0 || bot->GetDistance(DG_NODE_X[node], DG_NODE_Y[node], DG_NODE_Z[node]) > 10.0f)
+        return false;
+    uint8 const status = NodeStatus(bg, bot, uint8(node));
+    uint8 const team = BgTeamIdOf(bot);
+    return status == BG_DG_NODE_STATUS_ALLY_OCCUPIED + team ||
+           status == BG_DG_NODE_STATUS_ALLY_CONTESTED + team;
+}

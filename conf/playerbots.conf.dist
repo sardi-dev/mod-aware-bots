@@ -2584,6 +2584,9 @@ AiPlayerbot.RandomBotJoinBG = 1
 # Default: 30
 AiPlayerbot.BgCheckInterval = 30
 
+# Log battleground bots that remain in one place for over 30 seconds.
+AiPlayerbot.BgIdleLog = 0
+
 # Strand of the Ancients - beyond AC (AC has no SotA tactics; owner 2026-10-14, #736): the chance (0-100) that a
 # demolisher gets a bot driver at all. One deterministic roll per vehicle per life (a destroyed and respawned
 # demolisher rolls again); a demolisher that loses the roll is left for a player to drive. The harness verb

@@ -7,6 +7,8 @@
 #ifndef PLAYERBOTS_BATTLEGROUNDTACTICS_H
 #define PLAYERBOTS_BATTLEGROUNDTACTICS_H
 
+#include "BgIdleTracker.h"
+
 // Order matters here. BattlegroundAV.h reaches BattlegroundQueue.h -> RatedPvp.h, which uses both
 // CharacterDatabaseTransaction and BotGuid without declaring either. MovementActions.h has to
 // come first so the ordinary object headers are in scope, and DatabaseEnv.h after it but still
@@ -132,6 +134,14 @@ public:
     bool Execute(Event event) override;
 
 private:
+    BGTactics* bgIdleMovement = nullptr;
+    BgIdleTracker bgIdle;
+    char const* bgIdleMove = "none";
+    char const* bgIdleResult = "unobserved";
+    char const* bgIdleReason = "no movement attempt observed";
+    int idleDgNode(float x, float y);
+    bool idleDgGuard(Battleground* bg, int node);
+    void observeIdle(Battleground* bg);
     static std::string const HandleConsoleCommandPrivate(WorldSession* session, char const* args);
     bool moveToStart(bool force = false);
     bool selectObjective(bool reset = false);

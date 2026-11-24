@@ -7,6 +7,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **A diagnostic line for battleground bots that stand still** (2026-11-24)
+  - Summary: With `AiPlayerbot.BgIdleLog = 1`, a battleground bot that stays within 10 yd of one spot for more than
+    30 s while alive, out of combat and without a stationary duty logs `[BGIDLE]` (at most every 30 s) with its
+    objective, target, last movement action and why the move failed (no objective, too far, no ground height, all hops
+    rejected). Off by default.
+  - Why: Bots were seen idling near their base on node maps, and the logs showed where they stood but not why.
 - **The social summary counts the interval, by cause** (2026-11-24)
   - Summary: `[SOCIAL] summary (interval)` now reports each interval's liking changes up and down by cause (group
     time, a finished dungeon, a trade, a duel, guild time, thanks, insults, kicks, ninja looting), how many loaded

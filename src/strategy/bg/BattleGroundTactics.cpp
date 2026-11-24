@@ -7,6 +7,7 @@
 #include "BattleGroundTactics.h"
 #include "BgRealType.h"
 #include "BotCompat_C.h"
+#include <cstdio>
 #include <optional>
 #include <sstream>
 #include <iomanip>
@@ -2212,11 +2213,43 @@ namespace
 //
 // actual bg tactics below
 //
+void BGTactics::observeIdle(Battleground* bg)
+{
+    PositionInfo pos = context->GetValue<PositionMap&>("position")->Get()["bg objective"];
+    BattlegroundTypeId const type = RealBgTypeId(bg);
+    int const node = type == BATTLEGROUND_DG && pos.isSet() ? idleDgNode(pos.x, pos.y) : -1;
+    bool const atTarget = pos.isSet() && bot->GetDistance(pos.x, pos.y, pos.z) <= 10.0f;
+    bool const post = (type == BATTLEGROUND_AB || type == BATTLEGROUND_BFG ||
+                       (type == BATTLEGROUND_EY && !eyHasDuty())) && AbPlan::AtPost(bg, bot);
+    Unit* const carrier = WsgPlan::Enabled(bg) ? AI_VALUE(Unit*, "team flag carrier") : nullptr;
+    bool const healerEscort = carrier && WsgPlan::IsHealerFollower(bg, bot) &&
+                              bot->GetDistance(carrier) <= WsgPlan::EscortDistance(bg, bot);
+    bool const stationary = post || (type == BATTLEGROUND_DG && idleDgGuard(bg, node)) || healerEscort ||
+                            (atTarget && isCarryingObjective(bg));
+    bool const eligible = bg->GetStatus() == STATUS_IN_PROGRESS && bot->IsAlive() && !bot->IsInCombat() && !stationary;
+    if (!bgIdle.Update(getMSTime(), bg->GetInstanceID(), bot->GetPositionX(), bot->GetPositionY(),
+                       bot->GetPositionZ(), eligible))
+        return;
+
+    char objective[32] = "none", target[96] = "none";
+    if (node >= 0)
+        std::snprintf(objective, sizeof(objective), "node:%d", node);
+    else if (pos.isSet())
+        std::snprintf(objective, sizeof(objective), "position:unknown");
+    if (pos.isSet())
+        std::snprintf(target, sizeof(target), "%.1f,%.1f,%.1f", pos.x, pos.y, pos.z);
+    SF_LOG_INFO("playerbots", "[BGIDLE] bot=%s map=%u pos=%.1f,%.1f,%.1f objective=%s target=%s lastMove=%s result=%s reason=%s",
+                bot->GetName().c_str(), bot->GetMapId(), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
+                objective, target, bgIdleMove, bgIdleResult, bgIdleReason);
+}
+
 bool BGTactics::Execute(Event /*event*/)
 {
     Battleground* bg = bot->GetBattleground();
     if (!bg)
     {
+        if (sPlayerbotAIConfig->bgIdleLog && getName() == "move to objective")
+            bgIdle.Update(getMSTime(), 0, 0, 0, 0, false);
         botAI->ResetStrategies();
         return false;
     }
@@ -2244,6 +2277,15 @@ bool BGTactics::Execute(Event /*event*/)
         // can't use this in arena - no vPaths/vFlagIds (will crash server)
         botAI->ResetStrategies();
         return false;
+    }
+
+    if (sPlayerbotAIConfig->bgIdleLog && getName() == "check objective")
+    {
+        // The frequently scheduled check shares the movement action's diagnostic state.
+        if (!bgIdleMovement)
+            bgIdleMovement = static_cast<BGTactics*>(context->GetAction("move to objective"));
+        if (bgIdleMovement)
+            bgIdleMovement->observeIdle(bg);
     }
 
     // #747 (beyond AC; AC BattleGroundTactics.cpp has no such check): a bot that an earlier straight spline left
@@ -2460,6 +2502,8 @@ bool BGTactics::Execute(Event /*event*/)
 
     if (getName() == "move to objective")
     {
+        if (sPlayerbotAIConfig->bgIdleLog)
+            observeIdle(bg);
         if (bg->GetStatus() == STATUS_WAIT_JOIN)
             return false;
 
@@ -3740,6 +3784,8 @@ constexpr float DG_HOP_YARDS = 70.0f;
 
 bool BGTactics::moveToObjective(bool ignoreDist)
 {
+    if (sPlayerbotAIConfig->bgIdleLog)
+        bgIdleMove = "move_to_objective";
     Battleground* bg = bot->GetBattleground();
     if (!bg)
         return false;
@@ -3748,18 +3794,34 @@ bool BGTactics::moveToObjective(bool ignoreDist)
 
     PositionInfo pos = context->GetValue<PositionMap&>("position")->Get()["bg objective"];
     if (!pos.isSet())
-        return selectObjective();
+    {
+        bool const selected = selectObjective();
+        if (sPlayerbotAIConfig->bgIdleLog)
+        {
+            bgIdleResult = selected ? "selected" : "noobjective";
+            bgIdleReason = selected ? "objective selected" : "no objective selected";
+        }
+        return selected;
+    }
     else
     {
         // Use portals in Isle of Conquest Base
         if (bgType == BATTLEGROUND_IC)
         {
             if (IsLockedInsideKeep())
+            {
+                if (sPlayerbotAIConfig->bgIdleLog) { bgIdleResult = "handled"; bgIdleReason = "keep exit handled"; }
                 return true;
+            }
         }
 
         if (!ignoreDist && sServerFacade->IsDistanceGreaterThan(sServerFacade->GetDistance2d(bot, pos.x, pos.y), 100.0f))
         {
+            if (sPlayerbotAIConfig->bgIdleLog)
+            {
+                bgIdleResult = "toofar";
+                bgIdleReason = "objective beyond waypoint selection limit";
+            }
             // std::ostringstream out;
             // out << "It is too far away! " << pos.x << ", " << pos.y << ", Distance: " <<
             // sServerFacade->GetDistance2d(bot, pos.x, pos.y); bot->Say(out.str(), LANG_UNIVERSAL);
@@ -3770,6 +3832,7 @@ bool BGTactics::moveToObjective(bool ignoreDist)
         if (bot->GetDistance(pos.x, pos.y, pos.z) < 4.0f)
         {
             resetObjective();
+            if (sPlayerbotAIConfig->bgIdleLog) { bgIdleResult = "arrived"; bgIdleReason = "objective reached"; }
             return true;
         }
 
@@ -3788,6 +3851,7 @@ bool BGTactics::moveToObjective(bool ignoreDist)
                 G3D::Vector3 hop(pos.x, pos.y, pos.z);
                 PathGenerator path(bot);
                 path.CalculatePath(pos.x, pos.y, pos.z, false);
+                bool const noPath = sPlayerbotAIConfig->bgIdleLog && (path.GetPathType() & PATHFIND_NOPATH) != 0;
                 Movement::PointsArray const& points = path.GetPath();
                 float walked = 0.0f;
                 bool found = false;
@@ -3805,7 +3869,11 @@ bool BGTactics::moveToObjective(bool ignoreDist)
                 // (111 against a base at 133) gave no walkable hop. So the other hops are tried in turn on failure: the
                 // straight line at several angles and two lengths, each at the ground height under it.
                 if (found && bot->GetDistance(hop.x, hop.y, hop.z) <= DG_HOP_YARDS * 1.5f && MoveTo(bot->GetMapId(), hop.x, hop.y, hop.z))
+                {
+                    if (sPlayerbotAIConfig->bgIdleLog) { bgIdleResult = "ok"; bgIdleReason = "path hop accepted"; }
                     return true;
+                }
+                bool validHeight = false;
 
                 float const heading = std::atan2(pos.y - bot->GetPositionY(), pos.x - bot->GetPositionX());
                 for (float length : { DG_HOP_YARDS, DG_HOP_YARDS * 0.55f })
@@ -3815,15 +3883,33 @@ bool BGTactics::moveToObjective(bool ignoreDist)
                         float const x = bot->GetPositionX() + std::cos(angle) * length;
                         float const y = bot->GetPositionY() + std::sin(angle) * length;
                         float const z = bot->GetMap()->GetHeight(x, y, bot->GetPositionZ() + 5.0f);
-                        if (z > INVALID_HEIGHT && MoveTo(bot->GetMapId(), x, y, z))
-                            return true;
+                        if (z > INVALID_HEIGHT)
+                        {
+                            validHeight = true;
+                            if (MoveTo(bot->GetMapId(), x, y, z))
+                            {
+                                if (sPlayerbotAIConfig->bgIdleLog) { bgIdleResult = "ok"; bgIdleReason = "alternate hop accepted"; }
+                                return true;
+                            }
+                        }
                     }
+                if (sPlayerbotAIConfig->bgIdleLog)
+                {
+                    bgIdleResult = validHeight ? "movefailed" : "heightfail";
+                    bgIdleReason = validHeight ? (noPath ? "objective path unavailable; all usable hops rejected" : "all usable hops rejected") : "no alternate ground height";
+                }
                 return false;
             }
         }
 
         // dont increase from 1.5 will cause bugs with horde capping AV towers
-        return MoveNear(bot->GetMapId(), pos.x, pos.y, pos.z, 1.5f);
+        bool const moved = MoveNear(bot->GetMapId(), pos.x, pos.y, pos.z, 1.5f);
+        if (sPlayerbotAIConfig->bgIdleLog)
+        {
+            bgIdleResult = moved ? "ok" : "movefailed";
+            bgIdleReason = moved ? "objective move accepted" : "objective move rejected";
+        }
+        return moved;
     }
     return false;
 }
@@ -4108,7 +4194,14 @@ bool BGTactics::moveToObjectiveWp(BattleBotPath* const& currentPath, uint32 curr
     // out << ", " << nextPoint.x << ", " << nextPoint.y << " Path Size: " << currentPath->size() << ", Dist: " <<
     // sServerFacade->GetDistance2d(bot, nextPoint.x, nextPoint.y); bot->Say(out.str(), LANG_UNIVERSAL);
 
-    return MoveTo(bot->GetMapId(), nextPoint.x + frand(-2, 2), nextPoint.y + frand(-2, 2), nextPoint.z);
+    bool const moved = MoveTo(bot->GetMapId(), nextPoint.x + frand(-2, 2), nextPoint.y + frand(-2, 2), nextPoint.z);
+    if (sPlayerbotAIConfig->bgIdleLog)
+    {
+        bgIdleMove = "move_to_waypoint";
+        bgIdleResult = moved ? "ok" : "movefailed";
+        bgIdleReason = moved ? "waypoint move accepted" : "waypoint move rejected";
+    }
+    return moved;
 }
 
 bool BGTactics::startNewPathBegin(std::vector<BattleBotPath*> const& vPaths)
