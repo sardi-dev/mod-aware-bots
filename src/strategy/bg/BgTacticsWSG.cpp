@@ -14,6 +14,7 @@
 
 #include "Battleground.h"
 #include "ObjectAccessor.h"
+#include "MotionMaster.h"
 #include "PositionValue.h"
 #include "Playerbots.h"
 #include "ServerFacade.h"
@@ -127,11 +128,24 @@ bool BGTactics::protectFcWsg(Battleground* bg)
     if (!teamFC || teamFC == bot)
         return false;
 
-    // Only the strike roles and the healers that follow the carrier escort; home guards and mid hold their posts (the
-    // plan sends them where they are needed).
+    // Covering MID fighters can peel without becoming followers.
     float const stay = WsgPlan::EscortDistance(bg, bot);
     if (stay <= 0.0f)
+    {
+        if (Unit* attacker = WsgPlan::PeelTarget(bg, bot, teamFC))
+            if (AI_VALUE(Unit*, "current target") != attacker && EngageThreat(bot, attacker))
+                return true;
         return false;
+    }
+
+    // Like the strike run, replace a chase but yield during a point move for instant casts.
+    bool const closeInCombat = WsgPlan::EscortCloseDue(bg, bot);
+    if (closeInCombat && (bot->isMoving() || !bot->IsStopped()) &&
+        bot->GetMotionMaster()->GetCurrentMovementGeneratorType() != CHASE_MOTION_TYPE)
+        return false;
+    if (closeInCombat && !WsgPlan::IsHealerFollower(bg, bot))
+        return MoveNear(bot->GetMapId(), teamFC->GetPositionX(), teamFC->GetPositionY(), teamFC->GetPositionZ(),
+                        ESCORT_CLOSE_UP, MovementPriority::MOVEMENT_COMBAT);
 
     // Owner rule 2026-11-17: the healers follow the carrier. A healer that heals stands where it is while its target runs
     // out of reach (the first live match: no healer was seen with a carrier), so it closes up in a fight as well, with a
@@ -139,6 +153,8 @@ bool BGTactics::protectFcWsg(Battleground* bg)
     // value, which already puts the carrier first.
     if (WsgPlan::IsHealerFollower(bg, bot))
     {
+        if (bot->HasUnitState(UNIT_STATE_ROOT | UNIT_STATE_CONTROLLED))
+            return false;
         float const dist = bot->GetDistance(teamFC);
         if (WsgLogic::HealerStopsToHeal(dist, teamFC->GetHealthPct()))
         {

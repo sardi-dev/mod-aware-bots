@@ -1817,6 +1817,35 @@ bool StrikeRunDue(Battleground* bg, Player* bot)
     return due;
 }
 
+bool EscortCloseDue(Battleground* bg, Player* bot)
+{
+    if (!CommonGuards(bg, bot) || !bot->IsInCombat())
+        return false;
+
+    std::lock_guard<std::mutex> guard(g_lock);
+    auto const record = g_records.find(bg->GetInstanceID());
+    if (record == g_records.end())
+        return false;
+    TeamPlan& team = record->second.team[TeamIndexOf(bot)];
+    Member* me = FindMember(team, bot->GetGUIDLow());
+    uint32 const enemyFlag = TeamIndexOf(bot) == 0 ? TEAM_HORDE : TEAM_ALLIANCE;
+    Player* carrier = team.fcFull && bg->GetFlagPickerGUID(enemyFlag) == team.fcFull ?
+        ObjectAccessor::GetPlayer(*bot, team.fcFull) : nullptr;
+    if (!me || !carrier || carrier == bot || !carrier->IsInWorld() || !carrier->IsAlive() ||
+        carrier->GetMapId() != bot->GetMapId())
+        return false;
+    float const distance = bot->GetDistance(carrier);
+    float const leash = me->healerFollow ? HEALER_LEASH_YARDS :
+        (BotSkillMath::Uses(me->tier, Tier::GOOD) ? ESCORT_DISTANCE : CASUAL_ESCORT_DISTANCE);
+    bool const due = EscortClosesInCombat(me->role, me->kind, me->healerFollow, bot->IsAlive(), true,
+        bot->HasUnitState(UNIT_STATE_ROOT | UNIT_STATE_CONTROLLED), distance, leash) &&
+        !(me->healerFollow && HealerStopsToHeal(distance, carrier->GetHealthPct()));
+    if (due && record->second.escortCloseLogged.insert(bot->GetGUIDLow()).second)
+        SF_LOG_DEBUG("playerbots", "[BGWSG] %s closes on carrier in combat role=%s healer=%u",
+                     bot->GetName().c_str(), RoleName(me->role), me->healerFollow ? 1u : 0u);
+    return due;
+}
+
 bool MayTakeEnemyBaseFlag(Battleground* bg, Player* bot)
 {
     if (!CommonGuards(bg, bot))
@@ -1962,6 +1991,7 @@ Unit* PeelTarget(Battleground* bg, Player* bot, Unit* carrier)
     Role role = Role::NONE;
     Tier tier = Tier::CASUAL;
     bool healer = false;
+    Kind kind = Kind::HOLD_MID;
     {
         std::lock_guard<std::mutex> guard(g_lock);
         auto const record = g_records.find(bg->GetInstanceID());
@@ -1973,17 +2003,22 @@ Unit* PeelTarget(Battleground* bg, Player* bot, Unit* carrier)
         role = me->role;
         tier = me->tier;
         healer = me->healer;
+        kind = me->kind;
+        if (role == Role::MID && MayPeelCarrier(role, kind, healer, tier, bot->GetDistance(carrier), PEEL_RANGE) &&
+            record->second.coverPeelLogged.insert(bot->GetGUIDLow()).second)
+            SF_LOG_DEBUG("playerbots", "[BGWSG] %s may peel while covering the carrier", bot->GetName().c_str());
     }
 
-    // Good rule: the escorts peel what is hitting the carrier. A healer in the escort slot heals instead.
-    if (healer || !IsStrikeRole(role) || !BotSkillMath::Uses(tier, Tier::GOOD))
+    // Covering MID fighters can peel alongside the strike group.
+    if (!MayPeelCarrier(role, kind, healer, tier, bot->GetDistance(carrier), PEEL_RANGE))
         return nullptr;
 
     Unit* best = nullptr;
     float bestDist = 0.0f;
     for (Unit* attacker : carrier->getAttackers())
     {
-        if (!attacker || !attacker->IsInWorld() || !attacker->IsAlive() || attacker->GetMapId() != bot->GetMapId())
+        if (!attacker || !attacker->IsInWorld() || !attacker->IsAlive() || (role == Role::MID && attacker->GetVictim() != carrier) ||
+            attacker->GetMapId() != bot->GetMapId())
             continue;
 
         float const dist = bot->GetDistance(attacker);

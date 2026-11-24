@@ -36,6 +36,8 @@
 #include "Playerbots.h"
 #include "RandomPlayerbotMgr.h"
 
+static bool EscortPointless(Player* bot);
+
 // A hostile player is in range and selectable. The "enemy player target" value does the faction,
 // PvP-flag and visibility filtering, so this only needs to ask whether it found anyone.
 bool EnemyPlayerNear::IsActive() { return AI_VALUE(Unit*, "enemy player target"); }
@@ -223,6 +225,11 @@ bool PlayerOnLaneDetour::IsActive()
     return bg && bot->IsAlive() && (WsgPlan::DetourDue(bg, bot) || WsgPlan::StrikeRunDue(bg, bot));
 }
 
+bool EscortCloseInCombat::IsActive()
+{
+    return !EscortPointless(bot) && WsgPlan::EscortCloseDue(bot->GetBattleground(), bot);
+}
+
 bool EnemyFlagCarrierNear::IsActive()
 {
     Unit* carrier = AI_VALUE(Unit*, "enemy flag carrier");
@@ -237,12 +244,11 @@ bool EnemyFlagCarrierNear::IsActive()
     return true;
 }
 
-bool TeamFlagCarrierNear::IsActive()
+// With both flags off their bases nobody can cap, so escorting our carrier achieves nothing - the flags have to be
+// returned first. A healer the plan sends with the carrier keeps it alive anyway (owner rule 2026-11-17).
+static bool EscortPointless(Player* bot)
 {
     Battleground* bg = bot->GetBattleground();
-
-    // With both flags off their bases nobody can cap, so escorting our carrier achieves nothing -
-    // the flags have to be returned first.
     if (bg && (bg->GetMapId() == 489 || bg->GetMapId() == 726))
     {
         uint8 allianceState = 0;
@@ -262,9 +268,18 @@ bool TeamFlagCarrierNear::IsActive()
             haveState = true;
         }
 
-        if (haveState && allianceState != BG_WS_FLAG_STATE_ON_BASE && hordeState != BG_WS_FLAG_STATE_ON_BASE)
-            return false;
+        if (haveState && allianceState != BG_WS_FLAG_STATE_ON_BASE && hordeState != BG_WS_FLAG_STATE_ON_BASE &&
+            !WsgPlan::IsHealerFollower(bg, bot))
+            return true;
     }
+
+    return false;
+}
+
+bool TeamFlagCarrierNear::IsActive()
+{
+    if (EscortPointless(bot))
+        return false;
 
     Unit* carrier = AI_VALUE(Unit*, "team flag carrier");
     return carrier && bot->GetExactDist2d(carrier) <= 200.0f;

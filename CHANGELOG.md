@@ -91,6 +91,14 @@ and this project follows [Semantic Versioning](https://semver.org/).
   - Why: Every feature the module has is named in the README, marked Ready or In development.
 
 ### Fixed
+- **The flag carrier's escort stays with it** (2026-11-24)
+  - Summary: In Warsong Gulch and Twin Peaks the escort and backup (and the taker after a hand-off) keep within the
+    escort distance of a running carrier also in combat, using instant casts on the way; the healers the plan sends
+    with the carrier follow it in combat too, and keep doing so while both flags are out; mid bots covering the
+    carrier's rear may peel the nearest enemy hitting it. Other escorts still stop escorting while both flags are out,
+    as before.
+  - Why: In a bot-only match seven of eight carriers died 5 to 32 s after the pickup, still in the enemy base, because
+    their escort fell behind once a fight started.
 - **New random bot accounts are created again** (2026-11-24)
   - Summary: Random bot account passwords are 16 characters, the core's limit, instead of 20.
   - Why: The core refused every new bot account with a 20-character random password ("Cannot create random bot

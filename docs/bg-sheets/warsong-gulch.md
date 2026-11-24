@@ -311,6 +311,8 @@ alone to the stand; skip the call-out; return a flag late; sit on the power-up s
 
 ## 12. Bots today (verified against the code), with gaps
 
+As built: chosen escorts and healer followers close on the carrier in combat, including when both flags are away; nearby MID rear cover can peel attackers. This also applies in Twin Peaks; live movement remains to be checked.
+
 As built: a carrier on either carry plan drops offensive targets and chases unless the fight-alone conditions hold; the same targeting rule applies in Twin Peaks.
 
 As built: strike roles on a take-flag objective continue in combat outside 30 yd of the enemy stand at 40 percent health or more (25 percent for casual), unless rooted or held by more than one melee attacker. At the stand they fight as usual. This also applies in Twin Peaks; live movement remains to be checked.

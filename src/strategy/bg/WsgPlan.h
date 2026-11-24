@@ -63,6 +63,7 @@ namespace WsgPlan
     // member flag viaLane), alive, so the detour outranks the fight it stands in. False on every other map.
     bool DetourDue(Battleground* bg, Player* bot);
     bool StrikeRunDue(Battleground* bg, Player* bot);
+    bool EscortCloseDue(Battleground* bg, Player* bot);
 
     // A strike or mid bot may click the enemy flag on its stand: the flag takers, or anybody when no taker or backup is
     // within 50 yd of the stand (casual bots always may: they walk to the stand alone on purpose).

@@ -81,6 +81,10 @@ void WarsongStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
     triggers.push_back(
         new TriggerNode("low mana", NextAction::array(0, new NextAction("bg use buff", ACTION_MOVE), nullptr)));
 
+    // Close in combat at carrier priority; the action yields while a point move is underway.
+    triggers.push_back(new TriggerNode(
+        "bg escort close", NextAction::array(0, new NextAction("bg protect fc", ACTION_EMERGENCY), nullptr)));
+
     // Carrying the flag outranks everything else the bot might wander off to do.
     triggers.push_back(new TriggerNode(
         "player has flag", NextAction::array(0, new NextAction("bg move to objective", ACTION_EMERGENCY), nullptr)));

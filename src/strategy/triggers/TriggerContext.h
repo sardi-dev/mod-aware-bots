@@ -313,6 +313,7 @@ public:
         creators["bg queue dead"] = &TriggerContext::bg_queue_dead;
         creators["player has flag"] = &TriggerContext::player_has_flag;
         creators["bg detour due"] = &TriggerContext::bg_detour_due;
+        creators["bg escort close"] = &TriggerContext::bg_escort_close;
         creators["enemy flagcarrier near"] = &TriggerContext::enemy_flagcarrier_near;
         creators["team flagcarrier near"] = &TriggerContext::team_flagcarrier_near;
         creators["timer bg"] = &TriggerContext::timer_bg;
@@ -550,6 +551,7 @@ private:
     static Trigger* bg_queue_dead(PlayerbotAI* botAI) { return new BgQueueDeadTrigger(botAI); }
     static Trigger* player_has_flag(PlayerbotAI* botAI) { return new PlayerHasFlag(botAI); }
     static Trigger* bg_detour_due(PlayerbotAI* botAI) { return new PlayerOnLaneDetour(botAI); }
+    static Trigger* bg_escort_close(PlayerbotAI* botAI) { return new EscortCloseInCombat(botAI); }
     static Trigger* group_pve_enemy_caster(PlayerbotAI* botAI) { return new GroupPveEnemyCasterTrigger(botAI); }
     static Trigger* enemy_caster_in_range(PlayerbotAI* botAI) { return new EnemyCasterInRangeTrigger(botAI); }
     static Trigger* bot_is_cc(PlayerbotAI* botAI) { return new BotIsCcTrigger(botAI); }

@@ -90,6 +90,13 @@ public:
     bool IsActive() override;
 };
 
+class EscortCloseInCombat : public Trigger
+{
+public:
+    EscortCloseInCombat(PlayerbotAI* botAI) : Trigger(botAI, "bg escort close") {}
+    bool IsActive() override;
+};
+
 /// The enemy flag carrier is close enough to be worth chasing.
 class EnemyFlagCarrierNear : public Trigger
 {

@@ -174,6 +174,8 @@ struct Record : BgPlan::RecordBase
     uint32 bothHeldMs = 0;
     std::vector<Pending> pending;
     std::unordered_set<uint32> strikeRunLogged;
+    std::unordered_set<uint32> escortCloseLogged;
+    std::unordered_set<uint32> coverPeelLogged;
     TeamPlan team[2];
 };
 }  // namespace WsgPlanRec

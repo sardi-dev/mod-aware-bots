@@ -1209,6 +1209,20 @@ inline bool CarrierWantsFreedom(bool rooted, bool slowed, std::uint32_t attacker
     return (rooted || slowed) && attackers >= 1;
 }
 
+// Combat closing is limited to the chosen carrier duty, including a selected healer in any role.
+inline bool EscortClosesInCombat(Role role, Kind kind, bool healerFollower, bool alive, bool carrierValid,
+                                 bool controlled, float distance, float leash)
+{
+    return alive && carrierValid && !controlled && distance > leash &&
+           (healerFollower || (IsStrikeRole(role) && kind == Kind::ESCORT_CARRIER));
+}
+
+inline bool MayPeelCarrier(Role role, Kind kind, bool healer, Tier tier, float distanceToCarrier, float range)
+{
+    return !healer && BotSkillMath::Uses(tier, Tier::GOOD) &&
+           (IsStrikeRole(role) || (role == Role::MID && kind == Kind::COVER_CARRIER_REAR && distanceToCarrier <= range));
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // Healers follow the carrier (owner rule 2026-11-17).
 // ---------------------------------------------------------------------------------------------------------------------
