@@ -199,3 +199,66 @@ TEST(ledge_walk_off_the_searched_list_never_overflows)
     CHECK(episode.searchedCount == SEARCHED_CAPACITY);
     CHECK(SEARCHED_CAPACITY >= MAX_ATTEMPTS * PATH_SEARCHES);
 }
+
+// Shadowfang Keep 2026-11-23: the bot stood on the Ashbury wall walk with no path, the leader 16 yd below and 40 to 63 yd away;
+// the 12 yd rings found no landing that had a path to the leader.
+TEST(ledge_walk_off_wide_search_needs_no_path_and_a_leader_far_below)
+{
+    CHECK(WantsLeaderFloor(true, 16.0f));
+    CHECK(WantsLeaderFloor(true, LEADER_BELOW_YARDS + 0.1f));
+    CHECK(!WantsLeaderFloor(true, LEADER_BELOW_YARDS));
+    CHECK(!WantsLeaderFloor(true, -5.0f));
+    CHECK(!WantsLeaderFloor(false, 16.0f));
+}
+
+TEST(ledge_walk_off_wide_search_reads_rings_out_to_thirty_yards)
+{
+    CHECK(CandidateCount(false) == NEAR_RINGS * DIRECTIONS);
+    CHECK(CandidateCount(true) == CANDIDATE_COUNT);
+    CHECK_NEAR(RING_YARDS[NEAR_RINGS - 1], 12.0f, 0.01);
+    CHECK_NEAR(RING_YARDS[RINGS - 1], 30.0f, 0.01);
+    float dx = 0.0f, dy = 0.0f;
+    Offset(CANDIDATE_COUNT - DIRECTIONS, dx, dy);
+    CHECK_NEAR(std::sqrt(dx * dx + dy * dy), 30.0f, 0.01);
+}
+
+TEST(ledge_walk_off_wide_search_allows_a_longer_drop)
+{
+    Candidate c;
+    c.clear = true;
+    c.drop = 25.0f;
+    Episode narrow;
+    CHECK(!Eligible(c, narrow));
+    Episode wide;
+    wide.wide = true;
+    CHECK(Eligible(c, wide));
+    c.drop = WIDE_MAX_DROP_YARDS + 0.1f;
+    CHECK(!Eligible(c, wide));
+}
+
+TEST(ledge_walk_off_a_landing_on_the_leaders_floor_comes_first)
+{
+    CHECK(OnLeaderFloor(80.0f, 80.0f));
+    CHECK(OnLeaderFloor(83.9f, 80.0f));
+    CHECK(OnLeaderFloor(76.1f, 80.0f));
+    CHECK(!OnLeaderFloor(84.1f, 80.0f));
+    CHECK(!OnLeaderFloor(75.9f, 80.0f));
+
+    Candidate list[3];
+    for (Candidate& c : list)
+        c.clear = true;
+    // A stair 5 yd out and 6 yd down, the wall walk's own floor, and the leader's floor 30 yd out and 16 yd down.
+    list[0].flat = 5.0f;
+    list[0].drop = 6.0f;
+    list[1].flat = 3.0f;
+    list[1].drop = 0.0f;
+    list[2].flat = 30.0f;
+    list[2].drop = 16.0f;
+    list[2].onLeaderFloor = true;
+    unsigned out[PATH_SEARCHES] = {};
+    Episode episode;
+    episode.wide = true;
+    CHECK(Shortlist(list, 3, episode, out) == 3);
+    CHECK(out[0] == 2);
+    CHECK(out[1] == 0);
+}

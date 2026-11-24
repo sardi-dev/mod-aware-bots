@@ -153,20 +153,22 @@ bool DungeonUnstuckAction::TryWalkOff(Player* master, time_t now)
     float const botX = bot->GetPositionX();
     float const botY = bot->GetPositionY();
     float const botZ = bot->GetPositionZ();
+    // No path at all and the leader far below: the floor it stands on may be further out than the nearest edge.
+    bool const wide = LedgeWalkOffPolicy::WantsLeaderFloor((routeType & PATHFIND_NOPATH) != 0, botZ - master->GetPositionZ());
+    episode.wide = wide;
+    float const maxDrop = LedgeWalkOffPolicy::MaxDrop(wide);
     LedgeWalkOffPolicy::Candidate candidates[LedgeWalkOffPolicy::CANDIDATE_COUNT];
     unsigned count = 0;
-    for (unsigned i = 0; i < LedgeWalkOffPolicy::CANDIDATE_COUNT; ++i)
+    for (unsigned i = 0; i < LedgeWalkOffPolicy::CandidateCount(wide); ++i)
     {
         float dx = 0.0f, dy = 0.0f;
         LedgeWalkOffPolicy::Offset(i, dx, dy);
         float const x = botX + dx;
         float const y = botY + dy;
         // The ground under the point, searched this far down only (the drop bound), before any sight test.
-        float const z = map->GetHeight(x, y, botZ + BOT_Z_OFFSET_FIND_HEIGHT, true,
-                                       LedgeWalkOffPolicy::MAX_DROP_YARDS + 2.0f);
+        float const z = map->GetHeight(x, y, botZ + BOT_Z_OFFSET_FIND_HEIGHT, true, maxDrop + 2.0f);
         float const drop = botZ - z;
-        if (z <= INVALID_HEIGHT || drop > LedgeWalkOffPolicy::MAX_DROP_YARDS ||
-            drop < -LedgeWalkOffPolicy::MAX_RISE_YARDS)
+        if (z <= INVALID_HEIGHT || drop > maxDrop || drop < -LedgeWalkOffPolicy::MAX_RISE_YARDS)
             continue;
 
         LedgeWalkOffPolicy::Candidate& candidate = candidates[count++];
@@ -176,6 +178,7 @@ bool DungeonUnstuckAction::TryWalkOff(Player* master, time_t now)
         candidate.flat = std::hypot(dx, dy);
         candidate.drop = drop;
         candidate.clear = bot->IsWithinLOS(x, y, z + LANDING_EYE_HEIGHT);
+        candidate.onLeaderFloor = wide && LedgeWalkOffPolicy::OnLeaderFloor(z, master->GetPositionZ());
     }
 
     unsigned shortlist[LedgeWalkOffPolicy::PATH_SEARCHES];
@@ -217,7 +220,8 @@ bool DungeonUnstuckAction::TryWalkOff(Player* master, time_t now)
     }
 
     SF_LOG_INFO("playerbots", "[UNSTUCK] %s finds no landing within %.0f yd: %u read, %u short-listed, try %u:%s",
-                bot->GetName().c_str(), LedgeWalkOffPolicy::RING_YARDS[LedgeWalkOffPolicy::RINGS - 1], count, found,
+                bot->GetName().c_str(), LedgeWalkOffPolicy::RING_YARDS[LedgeWalkOffPolicy::CandidateCount(wide) /
+                    LedgeWalkOffPolicy::DIRECTIONS - 1], count, found,
                 episode.attempts, triedLength ? tried : " none");
     return false;
 }
