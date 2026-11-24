@@ -26,6 +26,7 @@ The module builds on mod-playerbots for AzerothCore and the Legends of Azeroth 5
 | City errands | Bots in a city see to their needs first (repair, vendor, trainer, mail), otherwise pick an errand (bank, auction house, inn, mailbox) with a dwell time and gestures; with the economy on, the auction errand really trades | `docs/social/social.md` sections 1 and 6 (`ErrandPolicy`) | beta |
 | Travel | Bots walk, ride and take flight paths; a travel graph routes them across continents by boats and zeppelins | `AiPlayerbot.EnableTravelNodes` (0; the graph is built once into the playerbots database, which takes minutes to hours and blocks that start) | beta |
 | Stranded recovery | A bot stuck in a closed pocket of the navigation mesh walks out, then uses its Hearthstone | `AiPlayerbot.StrandedRecovery.*` | beta |
+| Quest give-ups | A bot remembers why a quest failed (stuck on the way, stood still, a stalled walk to a boat or portal) across picking it up again and backs off a quest that keeps failing | `src/Utils/QuestRetryPolicy.h` | in use |
 | Breaks and log-offs | Solo bots take breaks at inns or quiet spots, group bots rarely and announced; some bots log off for a while and come back | `AiPlayerbot.BotBreaks.*` | in use |
 | Activity near humans | Bots in a human's zone or within a radius act fully; elsewhere a share acts at a time, thinned further when the server lags | `AiPlayerbot.BotActiveAlone`, `BotActiveAloneForceWhenInZone`, `BotActiveAloneForceWhenInRadius`, `botActiveAloneSmartScale` | in use (inherited) |
 | Training | Alt bots walk to a class trainer and pay for their spells; random bots learn class spells on level-up by default; riding and professions are bought at trainers with the bot's own gold | `AiPlayerbot.AltBotsVisitTrainers`, `AiPlayerbot.AutoLearnTrainerSpells` (1), `docs/economy/reserve-fund.md` section 3 | beta |
@@ -46,6 +47,7 @@ The module builds on mod-playerbots for AzerothCore and the Legends of Azeroth 5
 | Leading by marks | The bot tank pulls the skull when the group is ready (alive, near, health and mana up); damage dealers follow the marks | `AiPlayerbot.TankPullsMarks`, `MarkPullRange`, `docs/role-sheets/tank.md` | beta |
 | Loot manners | Bots congratulate a rare win, ask before needing an item you could use, and offer you an item they won but cannot use | `AiPlayerbot.LootEtiquette.*`, `AiPlayerbot.LootOwnerFirst` | beta |
 | Dungeon finder fill | When a human queues, the module counts the roles already queued and adds fitting bots (faction, level window) for the missing ones; a damage bot of a class that can tank switches spec when no tank fits; a filled tank is at most one level under the player (`AiPlayerbot.LfgFill.TankLevelBelowPlayer`), and a bot that cannot get into the dungeon leaves after three teleport asks | `AiPlayerbot.LfgFill.*` | in use |
+| Role balance | A random bot picking its first specialization prefers tank or healer when free bots of its faction and level band lack that role (25 / 20 / 55, at least four free tanks and healers per band from 25 to 54); existing specs never change | `AiPlayerbot.SpecRoleBalance.*` | beta |
 | Finder manners | Finder bots greet, ask whether anyone needs quests, say they are ready, thank after the last boss, wait for the loot and leave with a goodbye; they never leave mid-run | `AiPlayerbot.LfgManners.*` | in use |
 | Dungeon chat | Small talk at the moments of a run (start, boss pull and kill, a death, a long fight, low mana, a quick drink), short answers to simple phrases (`ready?`, `brb`, `thanks`), all rate limited | `AiPlayerbot.DungeonChat.*` | in use |
 | Bot voice | A stable personality per bot (quiet, friendly, joker, grumpy) picks its line variants and how much it talks | `AiPlayerbot.Voice.*` | in use |
@@ -87,6 +89,7 @@ The module builds on mod-playerbots for AzerothCore and the Legends of Azeroth 5
 | Leader bot | One bot per side, never a human, confirms the stance (balanced, all out, defense and so on) at the gates and at every change | `AiPlayerbot.Pvp.Leader.Enable` | beta |
 | Call-outs | Bots call the enemy flag carrier, flags taken and dropped, enemies at a base, the score near the end; expert bots call every event, casual bots fewer and later | `AiPlayerbot.BattlegroundChat.*` | beta |
 | Human call-out reader | A short line such as `inc bs 3`, `efc mid` or `help fr` is read as information, never as a command; it ages, never overrides what the plan sees, and the nearest bot answers "omw" | `AiPlayerbot.Pvp.CalloutReader.*` | beta |
+| Seen-only intel | On the node maps (Arathi Basin, Battle for Gilneas, Eye of the Storm) bots count only the enemies a living teammate can see or a call-out placed, never the whole roster | `src/Utils/AbPlanLogic.h` | beta |
 | New maps in the core | Silvershard Mines, Deepwind Gorge, the Tiger's Peak arena and the reworked Temple of Kotmogu rules | `patches/` 0017 to 0022 | beta |
 
 ### Arenas
@@ -123,13 +126,14 @@ The module builds on mod-playerbots for AzerothCore and the Legends of Azeroth 5
 | Reserve fund | Before buying, a bot keeps gold for repairs, its next trainer spells, its next riding skill and a mount; crafters keep a share for recipes | `AiPlayerbot.Auction.ReserveLookaheadLevels`, `ReserveGoalSharePercent`, `ReserveRecipeSharePercent`, `docs/economy/reserve-fund.md` | off, beta |
 | Profession materials | The auction keeps the materials a bot uses itself, in three levels by use | `docs/economy/auction-wiring.md` | off, beta |
 | Trial scope and limits | Limit the auction house to named bots, cap listings and visits, spread the work over world ticks, log a summary | `AiPlayerbot.Auction.OnlyBots`, `MaxActiveListings`, `VisitCooldownMinutes`, `SlicesPerTick`, `SummaryMinutes` | off, beta |
+| Soak measurements | The auction summary reports work per world tick (average and peak ms), waiting visits, timeouts, snapshot truncation and gold reconciliation (deposits, sale gold mailed and collected); vendor gear purchases log one line each | `[AUCTION] summary`, `[BUYGEAR]` | beta |
 | Economy tools | Scripts that rebuild the price and reserve tables from the data and measure the effect on the bots' gold | `tools/economy/` | beta |
 
 ## Social life
 
 | Feature | What it does | Source | State |
 |---------|--------------|--------|-------|
-| Liking score | A score from 0 to 100 per bot and human: grouping, a finished dungeon, a trade, a duel, guild time and thanks raise it; insults, kicks and ninja looting lower it; it drifts back to neutral; daily gain is capped | `AiPlayerbot.Social.Liking.*` (0), `docs/social/social.md` section 2 | off, beta |
+| Liking score | A score from 0 to 100 per bot and human: grouping, a finished dungeon, a completed trade (money or items really moved), a duel, guild time and thanks raise it; insults, kicks and ninja looting lower it; it drifts back to neutral; daily gain is capped | `AiPlayerbot.Social.Liking.*` (0), `docs/social/social.md` section 2 | off, beta |
 | Liking at work | The score changes the chance a bot accepts your invite and gates group and guild offers | `AiPlayerbot.Social.Liking.InviteSpan`, `QuestOfferMin`, `GuildOfferMin` | off, beta |
 | Playstyles | Each random bot gets a lasting style (quester, gatherer-crafter, trader, socializer, PvPer) that leans its activity weights its own way | `AiPlayerbot.Social.Playstyle.*` (0) | off, beta |
 | Shared-quest offers | A bot with the same unfinished quest as a human nearby, who likes that human, whispers an offer and sends an ordinary group invite; capped per human per hour | `AiPlayerbot.Social.QuestOffer.*` (0) | off, beta |
