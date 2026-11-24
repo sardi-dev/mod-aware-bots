@@ -941,7 +941,7 @@ AiPlayerbot.LfgBotRuns.LevelWindow = 5
 # Scarlet Monastery (164) is left out: it has no encounter rows (see AiPlayerbot.LfgCrawl.Maps). The Deadmines (6),
 # Gnomeregan (14), Dire Maul (34, 36, 38), the Black Morass (171), Old Hillsbrad (170), the Culling of Stratholme (209), Halls of
 # Origination (305), the Vortex Pinnacle (311) and the Lost City of the Tol'vir (312) need AiPlayerbot.LfgCrawl.EventSteps = 1.
-AiPlayerbot.LfgBotRuns.Dungeons = "4,1,10,16,272,26,273,20,24,8,12,163,6,14,34,36,38,171,170,311,312,209,305"
+AiPlayerbot.LfgBotRuns.Dungeons = "4,1,10,16,26,273,20,24,8,12,163,6,34,36,38,171,170,311,312,209,305"
 
 # Finder manners (beyond AC): a random bot the finder put in a group with a player behaves like a stranger. Inside the
 # dungeon it greets in party chat (HelloChance percent of the bots), one bot asks whether anyone needs the quests
