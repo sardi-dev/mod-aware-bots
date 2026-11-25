@@ -91,6 +91,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
   - Why: Every feature the module has is named in the README, marked Ready or In development.
 
 ### Fixed
+- **Bots get to loot they can see** (2026-11-24)
+  - Summary: After two failed walks to a visible corpse within reach, a bot tries a point just short of it; a walk
+    that gets at least a yard closer clears earlier failures, and a walk that stops making progress still gives up.
+  - Why: Half of the loot give-ups in a day were within 15 yards with line of sight.
 - **Dead bots in a dungeon release after a fair wait** (2026-11-24)
   - Summary: In a dungeon or raid led by a human, a dead bot waits while a resurrection is plausible (a pending
     request, its own self-resurrection, or a living group member who knows a resurrection spell), at most 60 s after

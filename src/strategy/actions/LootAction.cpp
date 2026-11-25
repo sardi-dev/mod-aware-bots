@@ -598,7 +598,7 @@ bool MoveToLootAction::Execute(Event /*event*/)
     if (!wo)
         return false;
 
-    // BT-182 (LootWalkPolicy.h): the navmesh path to the corpse itself, not MoveNear's spots in straight sight.
+    // Start with the navmesh path to the target; a nearby visible target can use an alternate approach.
     if (walkTarget != loot.guid)
     {
         walkTarget = loot.guid;
@@ -606,7 +606,9 @@ bool MoveToLootAction::Execute(Event /*event*/)
     }
     float const distance = bot->GetDistance(wo);
     bool const standingStill = !bot->isMoving() && !IsWaitingForLastMove(MovementPriority::MOVEMENT_NORMAL);
-    bool const launched = MoveTo(wo->GetMapId(), wo->GetPositionX(), wo->GetPositionY(), wo->GetPositionZ());
+    bool const alternate = LootWalkPolicy::UseAlternateApproach(walk.failedTries, distance, bot->IsWithinLOSInMap(wo));
+    bool const launched = alternate ? MoveTo(wo, LootWalkPolicy::ALTERNATE_STOP_DISTANCE) :
+        MoveTo(wo->GetMapId(), wo->GetPositionX(), wo->GetPositionY(), wo->GetPositionZ());
     walk.Observe(launched, standingStill, distance, getMSTime());
     if (!walk.GaveUp())
         return launched;

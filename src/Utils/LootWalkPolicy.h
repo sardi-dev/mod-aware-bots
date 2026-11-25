@@ -41,6 +41,13 @@ constexpr unsigned PROGRESS_WINDOW_MS = 2000;
 // is a failed try all the same, so an unreachable corpse is still given up.
 constexpr unsigned NO_PROGRESS_MS = 10000;
 
+// A nearby visible target may have an unreachable center. Try a point short of it after two failures.
+constexpr bool UseAlternateApproach(int failedTries, float distance, bool lineOfSight)
+{
+    return failedTries == MAX_FAILED_TRIES - 1 && distance > 0.0f && distance <= 15.0f && lineOfSight;
+}
+constexpr float ALTERNATE_STOP_DISTANCE = 1.5f;
+
 // The walk to one loot target, read on every tick.
 struct Walk
 {
@@ -61,6 +68,8 @@ struct Walk
         bool stalled = false;
         if (closestDistance <= 0.0f || distance <= closestDistance - PROGRESS_YARDS)
         {
+            if (closestDistance > 0.0f)
+                failedTries = 0;
             closestDistance = distance;
             closerAtMs = nowMs;
         }
