@@ -6,6 +6,7 @@
 
 #include "MarkTriggers.h"
 #include "MarkPullPolicy.h"
+#include "ReachPolicy.h"
 #include "Log.h"
 #include <ctime>
 
@@ -33,7 +34,7 @@ bool HealerReachTankAction::Execute(Event /*event*/)
         std::max(sPlayerbotAIConfig->healDistance - TANK_IN_SIGHT_RANGE_MARGIN, TANK_OUT_OF_SIGHT_APPROACH_DISTANCE);
     // In a fight the walk to a tank out of sight ends at the first point of the route where the healer sees him within
     // heal reach, not 8 yd from him: that walk took her round the corner into the pack the tank holds.
-    if (!inSight && bot->IsInCombat())
+    if (ReachPolicy::UseHealingPath(inSight, bot->IsInCombat(), tank->IsInCombat()))
     {
         PathGenerator path(bot);
         path.CalculatePath(tank->GetPositionX(), tank->GetPositionY(), tank->GetPositionZ(), false);
@@ -49,7 +50,7 @@ bool HealerReachTankAction::Execute(Event /*event*/)
                               false, MovementPriority::MOVEMENT_COMBAT);
         }
     }
-    return MoveTo(tank, inSight ? healReach : TANK_OUT_OF_SIGHT_APPROACH_DISTANCE);
+    return MoveTo(tank, inSight ? healReach : ReachPolicy::HiddenApproachDistance());
 }
 
 bool HealerReachTankAction::isUseful()

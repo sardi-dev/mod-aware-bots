@@ -42,6 +42,9 @@ constexpr bool CorpseInCastRange(float distance, bool inSight, float spellMaxRan
     return inSight && distance <= range;
 }
 
+// A hidden body needs a path to its position; a fixed standoff can move the caster away.
+constexpr float ApproachDistance(bool inSight) { return inSight ? 15.0f : 0.0f; }
+
 struct Candidate
 {
     bool human;             // a real player, not a bot

@@ -91,6 +91,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
   - Why: Every feature the module has is named in the README, marked Ready or In development.
 
 ### Fixed
+- **Healers come to a tank that fights out of their sight** (2026-11-25)
+  - Summary: A healer takes its line-of-sight path to the tank when the tank is in combat, not only when the healer is;
+    a healer or a resurrecting bot walks to a member or body it cannot see instead of stopping at a fixed standoff
+    that could move it away again.
+  - Why: In a Scarlet Halls run the tank died to six mobs while the out-of-combat healer cast nothing with full mana,
+    then spent a minute circling the body before the resurrection.
 - **Bots reach the auction house, and its work stays small per tick** (2026-11-25)
   - Summary: A mailbox visit no longer starts the auction cooldown; a bot whose auction visit is due heads for the
     auctioneer; the snapshot reads one listing past its cap to detect truncation instead of paging through the whole

@@ -14,6 +14,8 @@
 #include "SpellInfo.h"
 #include "SpellMgr.h"
 #include "ServerFacade.h"
+#include "ResurrectPolicy.h"
+#include "ReachPolicy.h"
 
 #include "Log.h"
 
@@ -118,12 +120,6 @@ ReachPartyMemberToHealAction::ReachPartyMemberToHealAction(PlayerbotAI* botAI)
 
 std::string const ReachPartyMemberToHealAction::GetTargetName() { return "party member to heal"; }
 
-namespace
-{
-// How close the healer walks to a member it cannot see, in yards: near enough to have line of sight in a corridor.
-constexpr float OUT_OF_SIGHT_APPROACH_DISTANCE = 8.0f;
-}  // namespace
-
 Unit* ReachPartyMemberToHealAction::FindHurtMemberOutOfSight(PlayerbotAI* botAI)
 {
     Player* bot = botAI->GetBot();
@@ -181,7 +177,7 @@ bool ReachPartyMemberToHealAction::Execute(Event event)
         return target && ReachTargetAction::Execute(event);
 
     // BT-155: path toward hidden members; MoveNear rejects destinations outside current sight.
-    return target && MoveTo(target, OUT_OF_SIGHT_APPROACH_DISTANCE);
+    return target && MoveTo(target, ReachPolicy::HiddenApproachDistance());
 }
 
 bool ReachPartyMemberToHealAction::isUseful()
@@ -206,10 +202,6 @@ std::string const ReachPartyMemberToResurrectAction::GetTargetName() { return "p
 
 namespace
 {
-// How close the bot walks to a body it sees, in yards: inside the cast range of every resurrection (30 or more).
-constexpr float RESURRECT_APPROACH_DISTANCE = 15.0f;
-// How close it walks to a body it cannot see: near enough to have line of sight around a corner.
-constexpr float RESURRECT_OUT_OF_SIGHT_APPROACH_DISTANCE = 8.0f;
 // The bot is close enough, and does not walk, when it sees the body within this distance.
 constexpr float RESURRECT_CLOSE_ENOUGH_DISTANCE = 20.0f;
 }  // namespace
@@ -231,7 +223,7 @@ bool ReachPartyMemberToResurrectAction::Execute(Event event)
         return false;
 
     WorldObject* goal = ResurrectionGoal(dead);
-    return MoveTo(goal, bot->IsWithinLOSInMap(goal) ? RESURRECT_APPROACH_DISTANCE : RESURRECT_OUT_OF_SIGHT_APPROACH_DISTANCE);
+    return MoveTo(goal, ResurrectPolicy::ApproachDistance(bot->IsWithinLOSInMap(goal)));
 }
 
 bool ReachPartyMemberToResurrectAction::isUseful()

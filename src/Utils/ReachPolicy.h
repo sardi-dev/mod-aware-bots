@@ -8,6 +8,13 @@
 // the target's own spot (contact distance); only touching distance without sight still stops.
 namespace ReachPolicy
 {
+// A hidden target needs its position, not a standoff that can move the healer away.
+constexpr float HiddenApproachDistance() { return 0.0f; }
+constexpr bool UseHealingPath(bool inSight, bool healerInCombat, bool tankInCombat)
+{
+    return !inSight && (healerInCombat || tankInCombat);
+}
+
 enum class Step
 {
     ARRIVED,          // inside the wanted distance and in sight, or touching: nothing to walk
