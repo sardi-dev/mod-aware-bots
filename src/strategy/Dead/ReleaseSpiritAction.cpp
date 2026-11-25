@@ -340,11 +340,11 @@ bool AutoReleaseSpiritAction::isUseful()
         for (GroupReference* ref = bot->GetGroup()->GetFirstMember(); ref; ref = ref->next())
         {
             Player* member = ref->GetSource();
-            if (!member || !member->IsInWorld() || !member->IsAlive())
+            // Only members in this instance count; one elsewhere is updated by another map and fights its own fights.
+            if (!member || !member->IsInWorld() || member->GetMap() != bot->GetMap() || !member->IsAlive())
                 continue;
             inCombat = inCombat || member->IsInCombat();
-            if (member->GetMap() == bot->GetMap() &&
-                (member->HasSpell(2006) || member->HasSpell(7328) || member->HasSpell(2008) ||
+            if ((member->HasSpell(2006) || member->HasSpell(7328) || member->HasSpell(2008) ||
                  member->HasSpell(50769) || member->HasSpell(20484) || member->HasSpell(115178)))
                 resurrecter = true;
         }

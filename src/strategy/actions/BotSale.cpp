@@ -661,9 +661,17 @@ namespace
     {
         QuestItems result;
         for (auto const& entry : sObjectMgr->GetQuestTemplates())
+        {
             for (QuestObjective const* objective : entry.second->m_questObjectives)
                 if (objective && objective->Type == QUEST_OBJECTIVE_ITEM && objective->ObjectId > 0)
                     result[uint32(objective->ObjectId)].push_back(entry.first);
+            // The item a quest hands out to be used (a source item) belongs to that quest as much as an objective does.
+            if (uint32 const source = entry.second->GetSrcItemId())
+                result[source].push_back(entry.first);
+            for (uint32 source : entry.second->RequiredSourceItemId)
+                if (source)
+                    result[source].push_back(entry.first);
+        }
         return result;
     }
 
@@ -740,7 +748,9 @@ bool BotSale::IsJunk(PlayerbotAI* ai, Player* bot, Item* item)
     uint32 const professions = JunkProfessions(bot);
     bool const protectedItem = item->IsEquipped() || proto->ItemId == 6948 ||
         proto->Class == ITEM_CLASS_CONTAINER || IsProfessionTool(proto) || IsUsableSupply(bot, proto) ||
-        FutureGear(ai, bot, item) || (!questItem && UsageKeeps(ai, proto, item));
+        FutureGear(ai, bot, item) ||
+        // Gear the bot wants stays even when an unrelated quest also asks for it.
+        ((!questItem || proto->Class == ITEM_CLASS_ARMOR || proto->Class == ITEM_CLASS_WEAPON) && UsageKeeps(ai, proto, item));
     return GearEarnPolicy::IsJunk(protectedItem, questItem, questKept, proto->Quality,
                                    proto->Class, proto->SubClass, professions);
 }

@@ -41,7 +41,8 @@ bool SellTripAction::Execute(Event /*event*/)
     for (uint64 guid : junkGuids)
         if (!bot->GetItemByGuid(guid)) soldJunk = true;
     bool const reserveSlot = soldJunk && BotSale::FreeBagSlots(bot) > 0;
-    bool const bagged = (!reserveSlot || BotSale::FreeBagSlots(bot) > 1) && BotShopping::BuyBagAt(botAI, bot, vendor);
+    // A bag is bought only for an empty bag slot and worn at once, so it may use the slot the sale kept free.
+    bool const bagged = BotShopping::BuyBagAt(botAI, bot, vendor);
     bool const bought = BotSale::BuySupplies(botAI, bot, vendor, reserveSlot) > 0;
     bool const tooled = BotSale::BuyTools(bot, vendor, reserveSlot) > 0;
 

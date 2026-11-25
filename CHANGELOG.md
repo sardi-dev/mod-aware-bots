@@ -91,6 +91,14 @@ and this project follows [Semantic Versioning](https://semver.org/).
   - Why: Every feature the module has is named in the README, marked Ready or In development.
 
 ### Fixed
+- **Looting and selling safety for the earned gear change** (2026-11-25)
+  - Summary: The loot loop stops as soon as an item source (a lockbox, a clam, milling or prospecting) is released by
+    the core after its last item; items a quest hands out to be used count as quest items; gear the bot wants is never
+    junk because some other quest also lists it; a bag may be bought with the last free slot (it is worn at once);
+    the dungeon release wait reads only group members in the same instance.
+  - Why: A review before deployment found a possible crash (the loop read the freed loot), quest items and wanted gear
+    that could be sold or destroyed, a bag purchase blocked in the case it was meant for, and reads of players on
+    other maps.
 - **Gilneas attackers reach the far base** (2026-11-25)
   - Summary: In the Battle for Gilneas a far objective is walked in short hops, as in Deepwind Gorge, since the map
     has no waypoint routes.

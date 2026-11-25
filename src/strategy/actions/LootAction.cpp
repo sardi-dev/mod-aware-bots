@@ -504,10 +504,19 @@ bool StoreLootAction::Execute(Event /*event*/)
             packet.WriteByteSeq(viewGuid[7]); packet.WriteByteSeq(viewGuid[6]); packet.WriteByteSeq(viewGuid[5]);
             packet.WriteByteSeq(viewGuid[3]); packet.WriteByteSeq(viewGuid[2]);
             packet << uint8(slot);
+            uint32 const lootedId = item->itemid;
             bot->GetSession()->HandleAutostoreLootItemOpcode(packet);
             allowedSlots.push_back(uint8(slot));
-            if (ItemTemplate const* lootedProto = sObjectMgr->GetItemTemplate(item->itemid))
+            if (ItemTemplate const* lootedProto = sObjectMgr->GetItemTemplate(lootedId))
                 lootedProtos.push_back(lootedProto);
+            // Taking the last item of an item source (a lockbox, a clam, milling or prospecting) makes the core release
+            // it at once: the item is destroyed or its loot cleared, so neither `loot` nor `item` may be used again.
+            if (srcGuid.IsItem())
+            {
+                Item* source = bot->GetItemByGuid(srcGuid);
+                if (!source || &source->loot != loot || loot->isLooted())
+                    break;
+            }
         }
 
         if (!allowedSlots.empty())
