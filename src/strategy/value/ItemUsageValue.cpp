@@ -59,6 +59,7 @@
 #include "ItemUsageValue.h"
 
 #include "Config.h"
+#include "GearEarnPolicy.h"
 #include "Item.h"
 #include "LootObjectStack.h"
 #include "Playerbots.h"
@@ -411,6 +412,26 @@ ItemUsage ItemUsageValue::QueryItemUsageForEquip(ItemTemplate const* itemProto, 
         if (itemScore > oldScore)
             isBetter = true;
 
+        float value = 0, oldValue = 0;
+        bool usable = false;
+        if (itemProto->Class == ITEM_CLASS_ARMOR && oldItemProto->Class == ITEM_CLASS_ARMOR)
+        {
+            usable = sRandomItemMgr->CanEquipArmor(bot, itemProto);
+            value = itemProto->GetArmor();
+            oldValue = oldItemProto->GetArmor();
+        }
+        else if (itemProto->Class == ITEM_CLASS_WEAPON && oldItemProto->Class == ITEM_CLASS_WEAPON)
+        {
+            usable = sRandomItemMgr->CanEquipWeapon(bot, itemProto);
+            if (itemProto->Delay && oldItemProto->Delay)
+            {
+                value = (itemProto->DamageMin + itemProto->DamageMax) / itemProto->Delay;
+                oldValue = (oldItemProto->DamageMin + oldItemProto->DamageMax) / oldItemProto->Delay;
+            }
+        }
+        if (GearEarnPolicy::BetterZeroScore(itemScore, oldScore, usable, value, oldValue))
+            isBetter = shouldEquipInSlot = true;
+
         Item* item = CurrentItem(itemProto);
         bool itemIsBroken =
             item && item->GetUInt32Value(ITEM_FIELD_DURABILITY) == 0 && item->GetUInt32Value(ITEM_FIELD_MAX_DURABILITY) > 0;
@@ -481,7 +502,7 @@ uint32 ItemUsageValue::GetSmallestBagSize()
 {
     int8 curSlot = 0;
     uint32 curSlots = 0;
-    for (uint8 bag = INVENTORY_SLOT_BAG_START + 1; bag < INVENTORY_SLOT_BAG_END; ++bag)
+    for (uint8 bag = INVENTORY_SLOT_BAG_START; bag < INVENTORY_SLOT_BAG_END; ++bag)
     {
         if (Bag const* pBag = (Bag*)bot->GetItemByPos(INVENTORY_SLOT_BAG_0, bag))
         {

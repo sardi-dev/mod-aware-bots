@@ -11,6 +11,9 @@
 #include "LootAction.h"
 
 #include "BroadcastHelper.h"
+#include "BotSale.h"
+#include "Item.h"
+#include "ObjectMgr.h"
 #include "Config.h"
 #include "Event.h"
 #include "GameObject.h"
@@ -18,6 +21,7 @@
 #include "LootStrategyValue.h"
 #include "LootObjectStack.h"
 #include "LootWalkPolicy.h"
+#include "ItemVisitors.h"
 #include "Playerbots.h"
 #include "SharedDefines.h"
 #include "WorldSession.h"
@@ -459,10 +463,48 @@ bool StoreLootAction::Execute(Event /*event*/)
             {
                 ItemTemplate const* proto = sObjectMgr->GetItemTemplate(item->itemid);
                 uint32 const maxStack = proto ? proto->GetMaxStackSize() : 1;
-                if (maxStack == 1)
+                ItemUsage const usage = AI_VALUE2(ItemUsage, "item upgrade", std::to_string(item->itemid));
+                bool const needed = usage == ITEM_USAGE_EQUIP || usage == ITEM_USAGE_REPLACE || usage == ITEM_USAGE_BAD_EQUIP;
+                bool const bag = proto && proto->Class == ITEM_CLASS_CONTAINER &&
+                    proto->SubClass == ITEM_SUBCLASS_CONTAINER && bot->CanUseItem(proto) == EQUIP_ERR_OK;
+                if (maxStack == 1 && !needed && !bag)
                     continue;
             }
 
+            ItemTemplate const* incoming = sObjectMgr->GetItemTemplate(item->itemid);
+            ItemPosCountVec dest;
+            InventoryResult const storage = bot->CanStoreNewItem(NULL_BAG, NULL_SLOT, dest, item->itemid, item->count);
+            if (storage != EQUIP_ERR_OK && BotSale::FreeBagSlots(bot) == 0 && incoming &&
+                item->count <= incoming->GetMaxStackSize())
+            {
+                ItemUsage const usage = AI_VALUE2(ItemUsage, "item upgrade", std::to_string(item->itemid));
+                bool const upgrade = usage == ITEM_USAGE_EQUIP || usage == ITEM_USAGE_REPLACE ||
+                    usage == ITEM_USAGE_BAD_EQUIP || usage == ITEM_USAGE_BROKEN_EQUIP;
+                bool const bag = incoming->Class == ITEM_CLASS_CONTAINER && incoming->SubClass == ITEM_SUBCLASS_CONTAINER &&
+                    bot->CanUseItem(incoming) == EQUIP_ERR_OK;
+                if ((upgrade || bag) && storage == EQUIP_ERR_INV_FULL)
+                    if (Item* junk = BotSale::LowestJunk(botAI, bot, incoming, uint64(srcGuid)))
+                    {
+                        std::string const name = junk->GetTemplate()->Name1;
+                        uint32 const count = junk->GetCount();
+                        bot->DestroyItem(junk->GetBagSlot(), junk->GetSlot(), true);
+                        SF_LOG_INFO("playerbots", "[GEAR] bot=%s made room: destroyed %s x%u for %s",
+                                    bot->GetName().c_str(), name.c_str(), count, incoming->Name1.c_str());
+                    }
+            }
+
+            // Store each item before evaluating the next one so the bag state is current.
+            WorldPacket packet(CMSG_AUTOSTORE_LOOT_ITEM);
+            packet.WriteBits(1, 23);
+            packet.WriteBit(viewGuid[2]); packet.WriteBit(viewGuid[7]); packet.WriteBit(viewGuid[0]);
+            packet.WriteBit(viewGuid[6]); packet.WriteBit(viewGuid[5]); packet.WriteBit(viewGuid[3]);
+            packet.WriteBit(viewGuid[1]); packet.WriteBit(viewGuid[4]);
+            packet.FlushBits();
+            packet.WriteByteSeq(viewGuid[0]); packet.WriteByteSeq(viewGuid[4]); packet.WriteByteSeq(viewGuid[1]);
+            packet.WriteByteSeq(viewGuid[7]); packet.WriteByteSeq(viewGuid[6]); packet.WriteByteSeq(viewGuid[5]);
+            packet.WriteByteSeq(viewGuid[3]); packet.WriteByteSeq(viewGuid[2]);
+            packet << uint8(slot);
+            bot->GetSession()->HandleAutostoreLootItemOpcode(packet);
             allowedSlots.push_back(uint8(slot));
             if (ItemTemplate const* lootedProto = sObjectMgr->GetItemTemplate(item->itemid))
                 lootedProtos.push_back(lootedProto);
@@ -470,37 +512,6 @@ bool StoreLootAction::Execute(Event /*event*/)
 
         if (!allowedSlots.empty())
         {
-            // Bit-packed CMSG_AUTOSTORE_LOOT_ITEM (core:Handlers/LootHandler.cpp:40-78):
-            // WriteBits(n, 23), then per entry guid mask 2,7,0,6,5,3,1,4, then per entry bytes
-            // 0,4,1,7,6,5,3,2 + uint8 slot.
-            WorldPacket p(CMSG_AUTOSTORE_LOOT_ITEM);
-            p.WriteBits(allowedSlots.size(), 23);
-            for (size_t i = 0; i < allowedSlots.size(); ++i)
-            {
-                p.WriteBit(viewGuid[2]);
-                p.WriteBit(viewGuid[7]);
-                p.WriteBit(viewGuid[0]);
-                p.WriteBit(viewGuid[6]);
-                p.WriteBit(viewGuid[5]);
-                p.WriteBit(viewGuid[3]);
-                p.WriteBit(viewGuid[1]);
-                p.WriteBit(viewGuid[4]);
-            }
-            p.FlushBits();
-            for (uint8 slot : allowedSlots)
-            {
-                p.WriteByteSeq(viewGuid[0]);
-                p.WriteByteSeq(viewGuid[4]);
-                p.WriteByteSeq(viewGuid[1]);
-                p.WriteByteSeq(viewGuid[7]);
-                p.WriteByteSeq(viewGuid[6]);
-                p.WriteByteSeq(viewGuid[5]);
-                p.WriteByteSeq(viewGuid[3]);
-                p.WriteByteSeq(viewGuid[2]);
-                p << slot;
-            }
-            bot->GetSession()->HandleAutostoreLootItemOpcode(p);
-
             // #322: AC LootAction.cpp:488 broadcasts once per looted item, right after the autostore.
             for (ItemTemplate const* lootedProto : lootedProtos)
                 BroadcastHelper::BroadcastLootingItem(botAI, bot, lootedProto);

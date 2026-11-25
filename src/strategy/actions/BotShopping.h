@@ -26,6 +26,7 @@ namespace BotShopping
     // and its gear budget pays for, and equips them, as a player does while there. True when it spent money.
     bool BuyRecipesAt(PlayerbotAI* botAI, Player* bot, Creature* vendor);
     bool BuyUpgradesAt(PlayerbotAI* botAI, Player* bot, Creature* vendor);
+    bool BuyBagAt(PlayerbotAI* botAI, Player* bot, Creature* vendor);
 
     // BT-218: a random bot that has trained riding and knows no mount yet (RandomBotsShopForGear on).
     bool WantsMount(Player* bot);

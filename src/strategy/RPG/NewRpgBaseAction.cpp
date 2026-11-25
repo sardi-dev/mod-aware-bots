@@ -8,6 +8,7 @@
 
 #include "NewRpgBaseAction.h"
 #include "GatherNodeMgr.h"
+#include "GearEarnPolicy.h"
 
 #include <algorithm>
 #include <atomic>
@@ -1035,18 +1036,22 @@ uint32 NewRpgBaseAction::BestRewardIndex(Quest const* quest)
 
     StatsWeightCalculator calc(bot);
     uint32 best = 0;
-    float bestScore = 0;
+    bool found = false;
+    GearEarnPolicy::Reward bestReward;
     for (uint32 i = 0; i < quest->GetRewChoiceItemsCount(); ++i)
     {
-        ItemUsage usage = AI_VALUE2(ItemUsage, "item usage", std::to_string(quest->RewardChoiceItemId[i]));
-        if (usage == bestUsage || usage == ITEM_USAGE_REPLACE)
+        uint32 const itemId = quest->RewardChoiceItemId[i];
+        ItemUsage usage = AI_VALUE2(ItemUsage, "item usage", std::to_string(itemId));
+        if (usage != bestUsage && !(bestUsage == ITEM_USAGE_EQUIP && usage == ITEM_USAGE_REPLACE))
+            continue;
+        ItemTemplate const* proto = sObjectMgr->GetItemTemplate(itemId);
+        GearEarnPolicy::Reward candidate{calc.CalculateItem(itemId), proto && bot->CanUseItem(proto) == EQUIP_ERR_OK && proto->InventoryType != INVTYPE_NON_EQUIP,
+                                         proto ? proto->ItemLevel : 0, proto ? proto->SellPrice : 0};
+        if (!found || GearEarnPolicy::BetterReward(candidate, bestReward))
         {
-            float score = calc.CalculateItem(quest->RewardChoiceItemId[i]);
-            if (score > bestScore)
-            {
-                bestScore = score;
-                best = i;
-            }
+            found = true;
+            best = i;
+            bestReward = candidate;
         }
     }
 

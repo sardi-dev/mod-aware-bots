@@ -7,6 +7,7 @@
 
 #include "BotAuctionPolicy.h"
 #include "BotGuid.h"
+#include "GearEarnPolicy.h"
 #include "BotSalePolicy.h"
 #include "BotToolPolicy.h"
 #include "Creature.h"
@@ -18,6 +19,9 @@
 #include "Player.h"
 #include "PlayerbotAI.h"
 #include "Playerbots.h"
+#include "QuestDef.h"
+#include "RandomItemManager.h"
+#include "StatsWeightCalculator.h"
 #include "SpellInfo.h"
 #include "SpellMgr.h"
 #include "Timer.h"
@@ -421,7 +425,7 @@ namespace
     // Buys single items of one offer until the bot holds the target, the money above the reserve ends or the vendor
     // refuses. The count is measured from the bag, so a lot that holds several items is not overbought.
     // moneyCap: the purse this kind may plan with (FirstKindMoney), never more than the bot holds.
-    uint32 BuyOffer(Player* bot, Creature* vendor, SupplyOffer const& offer, uint32 held, uint64 reserve, uint64 moneyCap)
+    uint32 BuyOffer(Player* bot, Creature* vendor, SupplyOffer const& offer, uint32 held, uint64 reserve, uint64 moneyCap, bool reserveSlot)
     {
         uint32 const unitPrice =
             uint32(floor(offer.proto->BuyPrice * bot->GetReputationPriceDiscount(vendor)));
@@ -432,6 +436,7 @@ namespace
         uint32 bought = 0;
         while (bought < toBuy && held + bought < SUPPLY_STACK_TARGET)
         {
+            if (reserveSlot && BotSale::FreeBagSlots(bot) <= 1) break;
             uint32 const before = bot->GetItemCount(offer.proto->ItemId, false);
             bot->BuyItemFromVendorSlot(vendor->GetGUID(), offer.slot, offer.proto->ItemId, 1, NULL_BAG, NULL_SLOT);
             uint32 const gained = bot->GetItemCount(offer.proto->ItemId, false) - before;
@@ -597,25 +602,177 @@ ItemFacts BotSale::FactsOf(Player* bot, Item* item, uint32 professions)
     facts.poorQuality = proto->Quality == ITEM_QUALITY_POOR;
     facts.gatheredMaterial = IsGatheredMaterial(kind);
     facts.unwantedLoot = IsUnwantedLootClass(proto);
-    facts.professionMaterial = ProfessionUses(professions, kind);
+    facts.professionMaterial = ProfessionUses(professions, kind) ||
+        (kind == MaterialKind::Herb && HasTradeSkill(bot, SKILL_HERBALISM)) ||
+        (kind == MaterialKind::Metal && HasTradeSkill(bot, SKILL_MINING)) ||
+        (kind == MaterialKind::Leather && HasTradeSkill(bot, SKILL_SKINNING));
     facts.usableFoodOrDrink = !SupplyKindOf(bot, proto).empty();
     return facts;
 }
 
-bool BotSale::UsageKeeps(PlayerbotAI* botAI, ItemTemplate const* proto)
+bool BotSale::UsageKeeps(PlayerbotAI* botAI, ItemTemplate const* proto, Item const* item)
 {
     // The usage value is not free (it creates a test item for gear), so it is asked only for what would be sold.
-    ItemUsage const usage =
-        botAI->GetAiObjectContext()->GetValue<ItemUsage>("item usage", std::to_string(proto->ItemId))->Get();
+    std::string qualifier = std::to_string(proto->ItemId);
+    if (item && item->GetItemRandomPropertyId())
+        qualifier += "," + std::to_string(item->GetItemRandomPropertyId());
+    ItemUsage const usage = botAI->GetAiObjectContext()->GetValue<ItemUsage>("item usage", qualifier)->Get();
     if (usage == ITEM_USAGE_QUEST)
         return true;
 
-    if ((proto->Class == ITEM_CLASS_ARMOR || proto->Class == ITEM_CLASS_WEAPON) &&
-        (usage == ITEM_USAGE_EQUIP || usage == ITEM_USAGE_REPLACE || usage == ITEM_USAGE_BROKEN_EQUIP))
-        return true;
+    if (proto->Class == ITEM_CLASS_ARMOR || proto->Class == ITEM_CLASS_WEAPON)
+    {
+        ItemUsage const upgrade = botAI->GetAiObjectContext()->GetValue<ItemUsage>("item upgrade", qualifier)->Get();
+        if (upgrade == ITEM_USAGE_EQUIP || upgrade == ITEM_USAGE_REPLACE || upgrade == ITEM_USAGE_BAD_EQUIP ||
+            upgrade == ITEM_USAGE_BROKEN_EQUIP)
+            return true;
+    }
 
     return proto->Class == ITEM_CLASS_RECIPE &&
            (usage == ITEM_USAGE_SKILL || usage == ITEM_USAGE_USE || usage == ITEM_USAGE_KEEP);
+}
+
+namespace
+{
+    uint32 JunkProfessions(Player* bot)
+    {
+        struct Entry { uint32 skill; uint32 bit; };
+        static Entry const entries[] = {
+            {SKILL_COOKING, GearEarnPolicy::Cooking}, {SKILL_FIRST_AID, GearEarnPolicy::FirstAid},
+            {SKILL_HERBALISM, GearEarnPolicy::Herbalism}, {SKILL_ALCHEMY, GearEarnPolicy::Alchemy},
+            {SKILL_INSCRIPTION, GearEarnPolicy::Inscription}, {SKILL_MINING, GearEarnPolicy::Mining},
+            {SKILL_BLACKSMITHING, GearEarnPolicy::Blacksmithing}, {SKILL_ENGINEERING, GearEarnPolicy::Engineering},
+            {SKILL_JEWELCRAFTING, GearEarnPolicy::Jewelcrafting}, {SKILL_SKINNING, GearEarnPolicy::Skinning},
+            {SKILL_LEATHERWORKING, GearEarnPolicy::Leatherworking}, {SKILL_TAILORING, GearEarnPolicy::Tailoring},
+            {SKILL_ENCHANTING, GearEarnPolicy::Enchanting}
+        };
+        uint32 mask = 0;
+        for (Entry const& entry : entries)
+            if (HasTradeSkill(bot, entry.skill)) mask |= entry.bit;
+        return mask;
+    }
+
+    static_assert(ITEM_CLASS_TRADE_GOODS == 7 && ITEM_SUBCLASS_PARTS == 1 && ITEM_SUBCLASS_CLOTH == 5 &&
+                  ITEM_SUBCLASS_LEATHER == 6 && ITEM_SUBCLASS_METAL_STONE == 7 && ITEM_SUBCLASS_MEAT == 8 &&
+                  ITEM_SUBCLASS_HERB == 9 && ITEM_SUBCLASS_ELEMENTAL == 10 && ITEM_SUBCLASS_ENCHANTING == 12,
+                  "trade goods constants changed");
+    using QuestItems = std::unordered_map<uint32, std::vector<uint32>>;
+    QuestItems BuildQuestItems()
+    {
+        QuestItems result;
+        for (auto const& entry : sObjectMgr->GetQuestTemplates())
+            for (QuestObjective const* objective : entry.second->m_questObjectives)
+                if (objective && objective->Type == QUEST_OBJECTIVE_ITEM && objective->ObjectId > 0)
+                    result[uint32(objective->ObjectId)].push_back(entry.first);
+        return result;
+    }
+
+    bool FutureGear(PlayerbotAI* /*ai*/, Player* bot, Item* item)
+    {
+        ItemTemplate const* proto = item->GetTemplate();
+        if ((proto->Class != ITEM_CLASS_ARMOR && proto->Class != ITEM_CLASS_WEAPON) ||
+            proto->RequiredLevel <= bot->getLevel() || uint64(proto->RequiredLevel) > uint64(bot->getLevel()) + 5)
+            return false;
+        ItemTemplate candidate = *proto;
+        candidate.RequiredLevel = 0;
+        if (bot->CanUseItem(&candidate) != EQUIP_ERR_OK ||
+            (proto->Class == ITEM_CLASS_ARMOR && !sRandomItemMgr->CanEquipArmor(bot, proto)) ||
+            (proto->Class == ITEM_CLASS_WEAPON && !sRandomItemMgr->CanEquipWeapon(bot, proto)))
+            return false;
+        uint8 slot = NULL_SLOT;
+        switch (proto->InventoryType)
+        {
+            case INVTYPE_HEAD: slot = EQUIPMENT_SLOT_HEAD; break;
+            case INVTYPE_NECK: slot = EQUIPMENT_SLOT_NECK; break;
+            case INVTYPE_SHOULDERS: slot = EQUIPMENT_SLOT_SHOULDERS; break;
+            case INVTYPE_BODY: slot = EQUIPMENT_SLOT_BODY; break;
+            case INVTYPE_CHEST: case INVTYPE_ROBE: slot = EQUIPMENT_SLOT_CHEST; break;
+            case INVTYPE_WAIST: slot = EQUIPMENT_SLOT_WAIST; break;
+            case INVTYPE_LEGS: slot = EQUIPMENT_SLOT_LEGS; break;
+            case INVTYPE_FEET: slot = EQUIPMENT_SLOT_FEET; break;
+            case INVTYPE_WRISTS: slot = EQUIPMENT_SLOT_WRISTS; break;
+            case INVTYPE_HANDS: slot = EQUIPMENT_SLOT_HANDS; break;
+            case INVTYPE_FINGER: slot = EQUIPMENT_SLOT_FINGER1; break;
+            case INVTYPE_TRINKET: slot = EQUIPMENT_SLOT_TRINKET1; break;
+            case INVTYPE_CLOAK: slot = EQUIPMENT_SLOT_BACK; break;
+            case INVTYPE_WEAPON: case INVTYPE_2HWEAPON: case INVTYPE_WEAPONMAINHAND:
+            case INVTYPE_RANGED: case INVTYPE_RANGEDRIGHT: slot = EQUIPMENT_SLOT_MAINHAND; break;
+            case INVTYPE_SHIELD: case INVTYPE_WEAPONOFFHAND: case INVTYPE_HOLDABLE: slot = EQUIPMENT_SLOT_OFFHAND; break;
+            case INVTYPE_TABARD: slot = EQUIPMENT_SLOT_TABARD; break;
+            default: return false;
+        }
+        StatsWeightCalculator calc(bot);
+        calc.SetItemSetBonus(false);
+        calc.SetOverflowPenalty(false);
+        float const score = calc.CalculateItem(proto->ItemId, item->GetItemRandomPropertyId());
+        uint8 const slots = (slot == EQUIPMENT_SLOT_FINGER1 || slot == EQUIPMENT_SLOT_TRINKET1) ? 2 : 1;
+        for (uint8 i = 0; i < slots; ++i)
+        {
+            Item* old = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot + i);
+            if (!old) return true;
+            float const oldScore = calc.CalculateItem(old->GetEntry(), old->GetItemRandomPropertyId());
+            float value = proto->Class == ITEM_CLASS_ARMOR ? proto->GetArmor() :
+                (proto->Delay ? (proto->DamageMin + proto->DamageMax) / proto->Delay : 0);
+            ItemTemplate const* previous = old->GetTemplate();
+            float oldValue = previous->Class == ITEM_CLASS_ARMOR ? previous->GetArmor() :
+                (previous->Delay ? (previous->DamageMin + previous->DamageMax) / previous->Delay : 0);
+            if (score > oldScore || GearEarnPolicy::BetterZeroScore(score, oldScore, true, value, oldValue)) return true;
+        }
+        return false;
+    }
+}
+
+bool BotSale::IsJunk(PlayerbotAI* ai, Player* bot, Item* item)
+{
+    ItemTemplate const* proto = item->GetTemplate();
+    static QuestItems const questItems = BuildQuestItems();
+    auto const found = questItems.find(proto->ItemId);
+    bool const questItem = proto->Class == ITEM_CLASS_QUEST || proto->StartQuest || found != questItems.end();
+    bool questKept = proto->StartQuest != 0;
+    if (found != questItems.end())
+        for (uint32 id : found->second)
+        {
+            Quest const* quest = sObjectMgr->GetQuestTemplate(id);
+            if (bot->FindQuestSlot(id) < MAX_QUEST_LOG_SIZE ||
+                (quest && quest->IsRepeatable() && bot->getRewardedQuests().count(id)))
+                questKept = true;
+        }
+    uint32 const professions = JunkProfessions(bot);
+    bool const protectedItem = item->IsEquipped() || proto->ItemId == 6948 ||
+        proto->Class == ITEM_CLASS_CONTAINER || IsProfessionTool(proto) || IsUsableSupply(bot, proto) ||
+        FutureGear(ai, bot, item) || (!questItem && UsageKeeps(ai, proto, item));
+    return GearEarnPolicy::IsJunk(protectedItem, questItem, questKept, proto->Quality,
+                                   proto->Class, proto->SubClass, professions);
+}
+
+uint32 BotSale::FreeBagSlots(Player* bot)
+{
+    uint32 free = 0;
+    for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
+        if (!bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot)) ++free;
+    for (uint8 slot = INVENTORY_SLOT_BAG_START; slot < INVENTORY_SLOT_BAG_END; ++slot)
+        if (Bag* bag = static_cast<Bag*>(bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))) free += bag->GetFreeSlots();
+    return free;
+}
+
+Item* BotSale::LowestJunk(PlayerbotAI* ai, Player* bot, ItemTemplate const* incoming, uint64 excludedGuid)
+{
+    Item* lowest = nullptr;
+    uint64 value = 0;
+    ForEachBagItem(bot, [&](Item* item)
+    {
+        if (item->GetGUID() == excludedGuid) return;
+        uint8 const bagSlot = item->GetBagSlot();
+        if (bagSlot != INVENTORY_SLOT_BAG_0)
+        {
+            Bag* bag = static_cast<Bag*>(bot->GetItemByPos(INVENTORY_SLOT_BAG_0, bagSlot));
+            if (!bag || !ItemCanGoIntoBag(incoming, bag->GetTemplate())) return;
+        }
+        if (!IsJunk(ai, bot, item)) return;
+        uint64 const price = uint64(item->GetTemplate()->SellPrice) * item->GetCount();
+        if (!lowest || price < value) { lowest = item; value = price; }
+    });
+    return lowest;
 }
 
 BotAuctionPolicy::MaterialUse BotSale::MaterialUseOf(Player* bot, ItemTemplate const* proto)
@@ -633,6 +790,7 @@ bool BotSale::IsUsableSupply(Player* bot, ItemTemplate const* proto)
 std::vector<Item*> BotSale::SelectItemsToSell(PlayerbotAI* botAI, Player* bot)
 {
     uint32 const professions = ProfessionsOf(bot);
+    static QuestItems const questItems = BuildQuestItems();
     // How many of an entry the bot already keeps in this pass, for the caps on materials and food.
     std::unordered_map<uint32, uint32> keptByEntry;
     std::vector<Item*> toSell;
@@ -644,22 +802,35 @@ std::vector<Item*> BotSale::SelectItemsToSell(PlayerbotAI* botAI, Player* bot)
         uint32& kept = inserted.first->second;
 
         ItemFacts facts = FactsOf(bot, item, professions);
-        facts.professionMaterial = facts.professionMaterial && KeepStack(kept, PROFESSION_MATERIAL_KEEP_MAX);
         facts.usableFoodOrDrink = facts.usableFoodOrDrink && KeepStack(kept, FOOD_DRINK_KEEP_MAX);
 
         if (facts.professionMaterial || facts.usableFoodOrDrink)
             kept += item->GetCount();
 
-        if (!ShouldSell(facts) || UsageKeeps(botAI, proto))
+        bool const junk = IsJunk(botAI, bot, item);
+        if (!junk && questItems.find(proto->ItemId) != questItems.end())
+            facts.questItem = true;
+        if (junk && proto->SellPrice)
+        {
+            toSell.push_back(item);
+            return;
+        }
+        uint32 const materialUses = GearEarnPolicy::MaterialProfessions(proto->Class, proto->SubClass);
+        if (proto->ItemId == 6948 || (materialUses & JunkProfessions(bot)) ||
+            FutureGear(botAI, bot, item) || !ShouldSell(facts) || UsageKeeps(botAI, proto, item))
             return;
 
         toSell.push_back(item);
     });
 
+    std::stable_partition(toSell.begin(), toSell.end(), [botAI, bot](Item* item)
+    {
+        return IsJunk(botAI, bot, item);
+    });
     return toSell;
 }
 
-uint32 BotSale::BuyTools(Player* bot, Creature* vendor)
+uint32 BotSale::BuyTools(Player* bot, Creature* vendor, bool reserveSlot)
 {
     std::vector<uint32> const wanted = BotToolPolicy::ToolsToBuy([bot](uint32 skill) { return bot->HasSkill(skill); },
                                                                  [bot](uint32 item) { return bot->HasItemCount(item, 1, true); });
@@ -686,6 +857,7 @@ uint32 BotSale::BuyTools(Player* bot, Creature* vendor)
             if (bot->GetMoney() < reserve + price)
                 break;
 
+            if (reserveSlot && FreeBagSlots(bot) <= 1) break;
             bot->BuyItemFromVendorSlot(vendor->GetGUID(), slot, itemId, 1, NULL_BAG, NULL_SLOT);
             if (bot->HasItemCount(itemId, 1, true))
             {
@@ -699,7 +871,7 @@ uint32 BotSale::BuyTools(Player* bot, Creature* vendor)
     return bought;
 }
 
-uint32 BotSale::BuySupplies(PlayerbotAI* botAI, Player* bot, Creature* vendor)
+uint32 BotSale::BuySupplies(PlayerbotAI* botAI, Player* bot, Creature* vendor, bool reserveSlot)
 {
     if (!IsEligible(botAI, bot) || ConjuresOwnSupplies(botAI, bot))
         return 0;
@@ -718,11 +890,11 @@ uint32 BotSale::BuySupplies(PlayerbotAI* botAI, Player* bot, Creature* vendor)
     if (IsManaUser(bot) && FindOffer(bot, vendor, DRINK_KIND, drink))
     {
         bool const foodLow = sellsFood && SupplyLow(counts.food);
-        bought += BuyOffer(bot, vendor, drink, counts.drink, reserve, FirstKindMoney(bot->GetMoney(), reserve, foodLow));
+        bought += BuyOffer(bot, vendor, drink, counts.drink, reserve, FirstKindMoney(bot->GetMoney(), reserve, foodLow), reserveSlot);
     }
 
     if (sellsFood)
-        bought += BuyOffer(bot, vendor, food, counts.food, reserve, bot->GetMoney());
+        bought += BuyOffer(bot, vendor, food, counts.food, reserve, bot->GetMoney(), reserveSlot);
 
     if (bought && moneyBefore > bot->GetMoney())
         SF_LOG_INFO("playerbots", "[SUPPLY] bot=%s items=%u money=" UI64FMTD " drink=%u", bot->GetName().c_str(), bought,

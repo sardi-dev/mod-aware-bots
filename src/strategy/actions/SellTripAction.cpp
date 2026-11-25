@@ -8,6 +8,7 @@
 #include "BotShopping.h"
 #include "Creature.h"
 #include "Event.h"
+#include "Item.h"
 #include "Player.h"
 #include "PlayerbotAI.h"
 #include "Playerbots.h"
@@ -29,20 +30,26 @@ bool SellTripAction::Execute(Event /*event*/)
 
     bot->SetFacingToObject(vendor);
 
+    std::vector<uint64> junkGuids;
+    for (Item* item : BotSale::SelectItemsToSell(botAI, bot))
+        if (BotSale::IsJunk(botAI, bot, item)) junkGuids.push_back(item->GetGUID());
     uint64 const moneyBefore = bot->GetMoney();
     botAI->DoSpecificAction("sell", Event("sell trip", "policy"), true);
     bool const sold = bot->GetMoney() > moneyBefore;
 
-    bool const bought = BotSale::BuySupplies(botAI, bot, vendor) > 0;
-    // BT-219: and the tools its professions need, when this vendor sells them.
-    bool const tooled = BotSale::BuyTools(bot, vendor) > 0;
+    bool soldJunk = false;
+    for (uint64 guid : junkGuids)
+        if (!bot->GetItemByGuid(guid)) soldJunk = true;
+    bool const reserveSlot = soldJunk && BotSale::FreeBagSlots(bot) > 0;
+    bool const bagged = (!reserveSlot || BotSale::FreeBagSlots(bot) > 1) && BotShopping::BuyBagAt(botAI, bot, vendor);
+    bool const bought = BotSale::BuySupplies(botAI, bot, vendor, reserveSlot) > 0;
+    bool const tooled = BotSale::BuyTools(bot, vendor, reserveSlot) > 0;
 
-    // Parity item 4: while at the vendor, a gear upgrade it sells and the bot can pay for is bought too.
-    bool const geared = BotShopping::BuyUpgradesAt(botAI, bot, vendor);
-
-    bool const recipes = BotShopping::BuyRecipesAt(botAI, bot, vendor);
+    // These actions may buy several items without exposing their individual storage decisions.
+    bool const geared = !reserveSlot && BotShopping::BuyUpgradesAt(botAI, bot, vendor);
+    bool const recipes = !reserveSlot && BotShopping::BuyRecipesAt(botAI, bot, vendor);
 
     // A trip that did none of it is not repeated for a while (a vendor without food, nothing the bot may sell).
-    BotSale::EndTrip(bot, sold || bought || tooled || geared || recipes);
+    BotSale::EndTrip(bot, sold || bagged || bought || tooled || geared || recipes);
     return true;
 }

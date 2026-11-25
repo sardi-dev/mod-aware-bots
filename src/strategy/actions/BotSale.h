@@ -40,6 +40,10 @@ namespace BotSale
     // items, tools, the bot's own professions' materials, food and drink, useful gear).
     std::vector<Item*> SelectItemsToSell(PlayerbotAI* botAI, Player* bot);
 
+    bool IsJunk(PlayerbotAI* botAI, Player* bot, Item* item);
+    Item* LowestJunk(PlayerbotAI* botAI, Player* bot, ItemTemplate const* incoming, uint64 excludedGuid);
+    uint32 FreeBagSlots(Player* bot);
+
     // The trade skills of the bot as BotSalePolicy::ProfessionBit flags.
     uint32 ProfessionsOf(Player* bot);
 
@@ -49,7 +53,7 @@ namespace BotSale
 
     // The item usage value's veto on selling what ShouldSell lets go: a quest item, gear to equip or replace, a recipe the
     // bot can learn or use. Asked only for items that would be sold, since the value is not free.
-    bool UsageKeeps(PlayerbotAI* botAI, ItemTemplate const* proto);
+    bool UsageKeeps(PlayerbotAI* botAI, ItemTemplate const* proto, Item const* item = nullptr);
 
     // The auction's level of use of an item for this bot: Crafting when one of its crafting professions has a recipe it
     // can make with the item, Secondary for a secondary skill's recipe, Gathered for a material it gathers itself, None
@@ -66,11 +70,11 @@ namespace BotSale
     // Buys food and drink fit for the bot's level (drink only for a mana user, and first, with half of the spare money
     // when food is low too) from the vendor it stands at, up to BotSalePolicy::SUPPLY_STACK_TARGET each when it holds
     // fewer than SUPPLY_LOW_WATER, with its own money and never below the repair reserve. Returns the items bought.
-    uint32 BuySupplies(PlayerbotAI* botAI, Player* bot, Creature* vendor);
+    uint32 BuySupplies(PlayerbotAI* botAI, Player* bot, Creature* vendor, bool reserveSlot = false);
 
     // BT-219: buys the profession tools the bot lacks (mining pick, skinning knife, blacksmith hammer, arclight spanner)
     // when this vendor sells them, with its own money above the repair reserve. Returns the tools bought.
-    uint32 BuyTools(Player* bot, Creature* vendor);
+    uint32 BuyTools(Player* bot, Creature* vendor, bool reserveSlot = false);
 
     // The trip's bookkeeping: Begin on the first step, End when the bot is done at the vendor (or gave up).
     void BeginTrip(Player* bot);

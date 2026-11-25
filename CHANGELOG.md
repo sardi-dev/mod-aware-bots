@@ -91,6 +91,16 @@ and this project follows [Semantic Versioning](https://semver.org/).
   - Why: Every feature the module has is named in the README, marked Ready or In development.
 
 ### Fixed
+- **Bots keep and wear the gear they earn** (2026-11-24)
+  - Summary: A bot no longer skips gear it would wear, or a bag, when its bags are nearly full; with completely full
+    bags it destroys its lowest-value junk to make room for such an item. On vendor trips it sells junk first (gray
+    items, materials for professions it does not have, leftovers of quests it no longer has) and keeps a free slot,
+    and it buys the largest bag it can afford for an empty bag slot. Gear it would wear now or within 5 levels is
+    never sold or destroyed. Quest rewards pick the best item for the bot (ties: wearable, then item level, then sell
+    price) instead of the first one when all score zero, and two zero-score items compare by armor or weapon damage.
+  - Why: Bots near level 20 with about 240 hours played still wore their starting gear: their 16 backpack slots were
+    full of materials and quest leftovers and they had no bags, so the loot rule skipped every piece of gear.
+
 - **The flag carrier's escort stays with it** (2026-11-24)
   - Summary: In Warsong Gulch and Twin Peaks the escort and backup (and the taker after a hand-off) keep within the
     escort distance of a running carrier also in combat, using instant casts on the way; the healers the plan sends

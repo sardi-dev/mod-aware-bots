@@ -9,6 +9,7 @@
 #include "BotAuction.h"
 #include "AuctionVisitPolicy.h"
 #include "RecipePurchasePolicy.h"
+#include "GearEarnPolicy.h"
 #include "ReservePolicy.h"
 #include "PlayerbotAIConfig.h"
 #include "UseItemAction.h"
@@ -193,6 +194,48 @@ bool BotShopping::BuyUpgradesAt(PlayerbotAI* botAI, Player* bot, Creature* vendo
     // One line per purchase, so a soak can count how often bots really buy and wear vendor upgrades.
     SF_LOG_INFO("playerbots", "[BUYGEAR] bot=%s level=%u vendor=%u spent=%u money=%u", bot->GetName().c_str(),
                 uint32(bot->getLevel()), vendor->GetEntry(), uint32(moneyBefore - moneyAfter), uint32(moneyAfter));
+    return true;
+}
+
+bool BotShopping::BuyBagAt(PlayerbotAI* botAI, Player* bot, Creature* vendor)
+{
+    bool empty = false;
+    for (uint8 slot = INVENTORY_SLOT_BAG_START; slot < INVENTORY_SLOT_BAG_END; ++slot)
+        if (!bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
+            empty = true;
+    VendorItemData const* items = vendor->GetVendorItems();
+    if (!empty || !items)
+        return false;
+
+    uint64 const budget = botAI->GetAiObjectContext()->GetValue<uint32>("free money for", uint32(NeedMoneyFor::gear))->Get();
+    uint32 bestSlot = 0, bestSize = 0;
+    uint64 bestPrice = 0;
+    for (uint32 slot = 0; slot < items->GetItemCount(); ++slot)
+    {
+        VendorItem const* entry = items->GetItem(slot);
+        if (!entry || entry->Type != ITEM_VENDOR_TYPE_ITEM || entry->ExtendedCost)
+            continue;
+        ItemTemplate const* proto = sObjectMgr->GetItemTemplate(entry->item);
+        if (!proto || proto->Class != ITEM_CLASS_CONTAINER || proto->SubClass != ITEM_SUBCLASS_CONTAINER ||
+            bot->CanUseItem(proto) != EQUIP_ERR_OK || !CanPayFor(botAI, bot, vendor, entry, proto))
+            continue;
+        uint64 const price = uint64(std::floor(proto->BuyPrice * bot->GetReputationPriceDiscount(vendor)));
+        if (GearEarnPolicy::BetterBag(proto->ContainerSlots, price, budget, bestSize, bestPrice))
+        {
+            bestSlot = slot;
+            bestSize = proto->ContainerSlots;
+            bestPrice = price;
+        }
+    }
+    if (!bestSize)
+        return false;
+    VendorItem const* entry = items->GetItem(bestSlot);
+    uint32 const itemId = entry->item;
+    uint32 const before = bot->GetItemCount(itemId, true);
+    bot->BuyItemFromVendorSlot(vendor->GetGUID(), bestSlot, itemId, 1, NULL_BAG, NULL_SLOT);
+    if (bot->GetItemCount(itemId, true) <= before)
+        return false;
+    botAI->DoSpecificAction("equip upgrades packet action");
     return true;
 }
 

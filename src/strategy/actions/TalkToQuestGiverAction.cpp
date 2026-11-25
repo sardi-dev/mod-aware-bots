@@ -41,6 +41,7 @@
 #include "TalkToQuestGiverAction.h"
 
 #include "BroadcastHelper.h"
+#include "GearEarnPolicy.h"
 #include "ChatHelper.h"
 #include "Event.h"
 #include "DBCStructure.h"
@@ -241,14 +242,19 @@ void TalkToQuestGiverAction::RewardMultipleItem(Quest const* quest, Object* ques
         if (!bestIds.empty())
         {
             StatsWeightCalculator calc(bot);
-            uint32 best = 0;
-            float bestScore = 0;
+            uint32 best = *bestIds.begin();
+            bool found = false;
+            GearEarnPolicy::Reward bestReward;
             for (uint32 id : bestIds)
             {
-                float score = calc.CalculateItem(quest->RewardChoiceItemId[id]);
-                if (score > bestScore)
+                uint32 const itemId = quest->RewardChoiceItemId[id];
+                ItemTemplate const* proto = sObjectMgr->GetItemTemplate(itemId);
+                GearEarnPolicy::Reward candidate{calc.CalculateItem(itemId), proto && bot->CanUseItem(proto) == EQUIP_ERR_OK && proto->InventoryType != INVTYPE_NON_EQUIP,
+                                                 proto ? proto->ItemLevel : 0, proto ? proto->SellPrice : 0};
+                if (!found || GearEarnPolicy::BetterReward(candidate, bestReward))
                 {
-                    bestScore = score;
+                    found = true;
+                    bestReward = candidate;
                     best = id;
                 }
             }
