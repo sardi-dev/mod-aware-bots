@@ -2468,6 +2468,8 @@ void PlayerbotAI::DoNextAction(bool min)
     bool isBotAlive = bot->IsAlive();
     if (_currentEngine != _engines[BOT_STATE_DEAD] && !isBotAlive)
     {
+        dungeonDeathTime = std::chrono::steady_clock::now();
+        ++dungeonDeathSerial;
         bot->StopMoving();
         bot->GetMotionMaster()->Clear();
         bot->GetMotionMaster()->MoveIdle();

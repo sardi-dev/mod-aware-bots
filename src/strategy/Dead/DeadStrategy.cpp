@@ -37,7 +37,7 @@ void DeadStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
     // Ported from AC mod-playerbots DeadStrategy.cpp:22-23 (#149). "resurrect request" is now wired in
     // WorldPacketTriggerContext.h / PlayerbotAI.cpp (SMSG_RESURRECT_REQUEST), and "accept resurrect" is
     // registered in WorldPacketActionContext.h (AcceptResurrectAction, ReleaseSpiritAction.h).
-    triggers.push_back(new TriggerNode("resurrect request", NextAction::array(0, new NextAction("accept resurrect", relevance), nullptr)));
+    triggers.push_back(new TriggerNode("resurrect request", NextAction::array(0, new NextAction("accept resurrect", relevance + 3.0f), nullptr)));
 
     // Not ported: "location stuck" -> "repop" (upstream DeadStrategy.cpp:26-27). Upstream's
     // DeadStrategy references it, but no "location stuck" trigger is defined anywhere in the

@@ -2421,6 +2421,12 @@ AiPlayerbot.SkillTiers.GoodDelayMaxMs = 400
 AiPlayerbot.SkillTiers.CasualDelayMinMs = 400
 AiPlayerbot.SkillTiers.CasualDelayMaxMs = 900
 
+# Dead bots in a human-led dungeon or raid wait for a plausible resurrection for this many
+# seconds after all living group members leave combat. The second limit starts at death and
+# also applies during combat. Zero makes the corresponding limit immediate.
+AiPlayerbot.DungeonReleaseWaitSeconds = 60
+AiPlayerbot.DungeonReleaseMaxWaitSeconds = 300
+
 # In a dungeon (not a raid) the bots of a real player walk behind the player along the way the player walked: the
 # tank first, healers last, 3 to 10 yards back, each with a fixed small step to the side. Off: the ring of bots
 # around the leader that is used everywhere else. In combat the bots position as before.

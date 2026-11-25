@@ -2,6 +2,7 @@
 #define _PLAYERBOT_PLAYERBOTAI_H
 
 #include <atomic>
+#include <chrono>
 #include <list>
 #include <queue>
 #include <stack>
@@ -184,6 +185,8 @@ private:
     static void _fillGearScoreData(Player* player, Item* item, std::vector<uint32>* gearScore, uint32& twoHandScore, bool mixed = false);
 
 public:
+    std::chrono::steady_clock::time_point dungeonDeathTime{};
+    uint32 dungeonDeathSerial = 0;
     // BT-155: shared across engines so defend diagnostics are limited per bot.
     uint32 lastDefendLogMs = 0;
     // BT-193: the [FOLLOW] far clock is per bot, shared by its combat and non-combat engines.

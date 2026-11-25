@@ -8,6 +8,9 @@
 #include "BotVoice.h"
 
 #include "DatabaseEnvFwd.h"
+#include "Config.h"
+#include "DungeonReleasePolicy.h"
+#include "Group.h"
 #include "Battleground.h"
 #include "Event.h"
 #include "ObjectDefines.h"
@@ -21,6 +24,8 @@
 #include "GridNotifiers.h"
 #include "GridNotifiersImpl.h"
 
+#include <algorithm>
+#include <chrono>
 #include <sstream>
 
 bool ReleaseSpiritAction::Execute(Event event)
@@ -105,6 +110,10 @@ bool ReleaseSpiritAction::Execute(Event event)
 
 bool AutoReleaseSpiritAction::Execute(Event event)
 {
+    if (dungeonRelease)
+        SF_LOG_DEBUG("playerbots", "[DEAD] bot=%s waited=%us reason=%s",
+                     bot->GetName().c_str(), dungeonWaited, dungeonReason);
+    dungeonRelease = false;
     BotVoice::NoteDeath(bot);
 
     // Death Count to prevent skeleton piles
@@ -289,6 +298,7 @@ bool AutoReleaseSpiritAction::ShouldDelayBattlegroundRelease()
 
 bool AutoReleaseSpiritAction::isUseful()
 {
+    dungeonRelease = false;
     if (!bot->isDead())
         return false;
 
@@ -315,7 +325,59 @@ bool AutoReleaseSpiritAction::isUseful()
 
     if (botAI->HasActivePlayerMaster() && botAI->GetGroupMaster()->GetMapId() == bot->GetMapId() && bot->GetMap() &&
         (bot->GetMap()->IsRaid() || bot->GetMap()->IsDungeon()))
-        return false;
+    {
+        using Clock = std::chrono::steady_clock;
+        Clock::time_point const now = Clock::now();
+        if (dungeonDeathSerial != botAI->dungeonDeathSerial || combatEnded == Clock::time_point{})
+        {
+            dungeonDeathSerial = botAI->dungeonDeathSerial;
+            combatEnded = botAI->dungeonDeathTime == Clock::time_point{} ? now : botAI->dungeonDeathTime;
+            dungeonCombatObserved = false;
+        }
+
+        bool inCombat = false;
+        bool resurrecter = false;
+        for (GroupReference* ref = bot->GetGroup()->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* member = ref->GetSource();
+            if (!member || !member->IsInWorld() || !member->IsAlive())
+                continue;
+            inCombat = inCombat || member->IsInCombat();
+            if (member->GetMap() == bot->GetMap() &&
+                (member->HasSpell(2006) || member->HasSpell(7328) || member->HasSpell(2008) ||
+                 member->HasSpell(50769) || member->HasSpell(20484) || member->HasSpell(115178)))
+                resurrecter = true;
+        }
+        if (inCombat)
+            dungeonCombatObserved = true;
+        else if (dungeonCombatObserved)
+        {
+            combatEnded = now;
+            dungeonCombatObserved = false;
+        }
+        auto const elapsed = [](Clock::time_point from, Clock::time_point to) -> uint64
+        {
+            return uint64(std::chrono::duration_cast<std::chrono::seconds>(to - from).count());
+        };
+        Clock::time_point const death = botAI->dungeonDeathTime == Clock::time_point{} ? now : botAI->dungeonDeathTime;
+        uint64 const waited = elapsed(death, now);
+        DungeonReleasePolicy::Facts const facts = {
+            waited, elapsed(combatEnded, now),
+            uint32(std::max(0, sConfigMgr->GetIntDefault("AiPlayerbot.DungeonReleaseWaitSeconds", 60))),
+            uint32(std::max(0, sConfigMgr->GetIntDefault("AiPlayerbot.DungeonReleaseMaxWaitSeconds", 300))),
+            inCombat, bot->IsRessurectRequested(), bot->GetUInt32Value(PLAYER_FIELD_SELF_RES_SPELL) != 0,
+            resurrecter
+        };
+        auto const decision = DungeonReleasePolicy::Decide(facts);
+        if (decision == DungeonReleasePolicy::Decision::Wait)
+            return false;
+        dungeonRelease = true;
+        dungeonWaited = uint32(waited);
+        dungeonReason = decision == DungeonReleasePolicy::Decision::NoResurrecter ? "no_resurrecter" :
+                        decision == DungeonReleasePolicy::Decision::CombatWaitExpired ? "combat_wait_expired" :
+                        "death_wait_expired";
+        return true;
+    }
 
     // #162: MoP-only "release when the master is dead" branch removed - AC's ShouldAutoRelease has none
     // (AC ReleaseSpiritAction.cpp): a grouped bot waits for its master's resurrection or the distance rule.

@@ -91,6 +91,14 @@ and this project follows [Semantic Versioning](https://semver.org/).
   - Why: Every feature the module has is named in the README, marked Ready or In development.
 
 ### Fixed
+- **Dead bots in a dungeon release after a fair wait** (2026-11-24)
+  - Summary: In a dungeon or raid led by a human, a dead bot waits while a resurrection is plausible (a pending
+    request, its own self-resurrection, or a living group member who knows a resurrection spell), at most 60 s after
+    the group's fight ends and 300 s after its death (`AiPlayerbot.DungeonReleaseWaitSeconds`,
+    `DungeonReleaseMaxWaitSeconds`); then it releases and makes the normal corpse run. It accepts a resurrection
+    request before anything else.
+  - Why: Dead bots waited forever for a resurrection whenever a human led the group in a dungeon, even with no
+    healer able to bring them back.
 - **Bots keep and wear the gear they earn** (2026-11-24)
   - Summary: A bot no longer skips gear it would wear, or a bag, when its bags are nearly full; with completely full
     bags it destroys its lowest-value junk to make room for such an item. On vendor trips it sells junk first (gray

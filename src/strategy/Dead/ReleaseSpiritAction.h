@@ -6,6 +6,7 @@
 #ifndef _PLAYERBOT_RELEASESPIRITACTION_H
 #define _PLAYERBOT_RELEASESPIRITACTION_H
 
+#include <chrono>
 #include <cstdint>
 #include <ctime>
 
@@ -44,6 +45,12 @@ private:
     /// re-directed onto the ghost.
     bool ShouldDelayBattlegroundRelease();
 
+    uint32_t dungeonDeathSerial = 0;
+    std::chrono::steady_clock::time_point combatEnded{};
+    bool dungeonCombatObserved = false;
+    bool dungeonRelease = false;
+    uint32_t dungeonWaited = 0;
+    char const* dungeonReason = "";
     uint32_t bg_gossip_time = 0;
     time_t bgReleaseAttemptTime = 0;
 };
