@@ -22,6 +22,7 @@ namespace
     SocialSoak::Tally totals;
     SocialSoak::PassStats passStats;
     uint32 lastSummaryAt = 0;
+    uint32 nextSummaryAt = 0;
 
     bool AnySwitchOn()
     {
@@ -90,13 +91,19 @@ void SocialLog::Update()
     uint32 const now = uint32(time(nullptr));
     if (lastSummaryAt == 0)
     {
-        // The first call starts the window: no line for a server that has just started.
         lastSummaryAt = now;
+        uint32 const interval = sPlayerbotAIConfig->socialSummarySeconds;
+        nextSummaryAt = SocialSoak::NextSummaryBoundary(now, interval);
+        WriteSummary(now);
         return;
     }
 
-    if (SocialSoak::SummaryDue(lastSummaryAt, now, sPlayerbotAIConfig->socialSummarySeconds, true))
+    uint32 const interval = sPlayerbotAIConfig->socialSummarySeconds;
+    if (interval && (now < lastSummaryAt || !nextSummaryAt || now >= nextSummaryAt))
+    {
         WriteSummary(now);
+        nextSummaryAt = SocialSoak::NextSummaryBoundary(now, interval);
+    }
 }
 
 void SocialLog::Shutdown()

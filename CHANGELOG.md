@@ -91,6 +91,13 @@ and this project follows [Semantic Versioning](https://semver.org/).
   - Why: Every feature the module has is named in the README, marked Ready or In development.
 
 ### Fixed
+- **Bots reach the auction house, and its work stays small per tick** (2026-11-25)
+  - Summary: A mailbox visit no longer starts the auction cooldown; a bot whose auction visit is due heads for the
+    auctioneer; the snapshot reads one listing past its cap to detect truncation instead of paging through the whole
+    house; purchase needs are evaluated five per slice; slow steps and ticks are logged; social summaries fall on
+    fixed interval boundaries and one is written at start-up.
+  - Why: The soak showed no completed auction visit in a day (mailbox visits kept closing the auction window), an
+    auction tick of 399 ms, and social summaries missing in about half the intervals.
 - **A timed-out dock wait counts as a transport failure for a hand-in** (2026-11-25)
   - Summary: When a bot on a hand-in trip gives up waiting for a boat or zeppelin, the quest gets the transport
     failure retry delay, as a stalled walk to the transport already did.

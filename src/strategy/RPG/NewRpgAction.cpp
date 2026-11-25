@@ -974,21 +974,33 @@ uint32 IdleGesture()
 
 bool NewRpgWanderNpcAction::Execute(Event /*event*/)
 {
-    if (SearchQuestGiverAndAcceptOrReward())
-        return true;
-
     NewRpgInfo& info = botAI->GetRpgInfo();
     auto* dataPtr = std::get_if<NewRpgInfo::WanderNpc>(&info.data);
     if (!dataPtr)
         return false;
 
     auto& data = *dataPtr;
+    bool const auctionErrand = data.npcOrGo && Errand(data.errand) == Errand::Auction;
+    if (!auctionErrand && (data.npcOrGo || !SoakAuctionVisitReady(botAI, bot)) && SearchQuestGiverAndAcceptOrReward())
+        return true;
 
     if (!data.npcOrGo)
     {
         // A quest giver with something to offer first, then an errand (BT-253), then AC's random NPC visit.
-        BotGuid npcOrGo = ChooseNpcOrGameObjectToInteract(true);
+        BotGuid npcOrGo = BotGuid::Empty;
         Errand errand = Errand::None;
+        if (BotAuction::SoakVisitDue(botAI, bot))
+        {
+            ErrandPolicy::Town town;
+            ErrandTargets const targets = FindErrandTargets(botAI, bot, town);
+            if (town.auctionDue && ErrandPolicy::Choose(town, 0) == Errand::Auction)
+            {
+                errand = Errand::Auction;
+                npcOrGo = targets[size_t(errand)]->GetGUID();
+            }
+        }
+        if (npcOrGo.IsEmpty())
+            npcOrGo = ChooseNpcOrGameObjectToInteract(true);
         if (npcOrGo.IsEmpty() && !BotScenario::PickNearest(bot))
         {
             ErrandPolicy::Town town;

@@ -85,6 +85,7 @@ namespace
 
     // Reading what a listing needs costs a usage value per item; a visit looks at no more than this many.
     constexpr uint32 MAX_NEED_EVALUATIONS = 40;
+    constexpr uint32 NEED_EVALUATIONS_PER_SLICE = 5;
 
     // The skill lines the reserve counts: gathering and the secondary professions (the crafting ones are in ReservePolicy).
     constexpr uint32 OTHER_PROFESSION_SKILLS[] = { SKILL_HERBALISM, SKILL_MINING, SKILL_SKINNING, SKILL_COOKING, SKILL_FIRST_AID,
@@ -150,7 +151,11 @@ namespace
         std::vector<BotAuctionPolicy::StackFacts> stacks;
         std::vector<PlannedSale> sales;
         size_t nextSale = 0;
+        bool snapshotTaken = false;
         bool buyPlanned = false;
+        size_t nextCandidate = 0;
+        uint32 evaluated = 0;
+        std::vector<BotAuctionPolicy::PurchaseCandidate> candidates;
         std::vector<BotAuctionPolicy::Purchase> purchases;
         size_t nextPurchase = 0;
         VisitResult result;
@@ -378,22 +383,11 @@ namespace
     void TakeSnapshot(Player* bot, Creature* auctioneer, Visit& visit)
     {
         std::vector<AuctionListing> listings;
-        sAuctionMgr->GetAuctionsMap(auctioneer->getFaction())->GetListings(listings, 0, SNAPSHOT_LIMIT);
-        uint64 omitted = 0;
-        if (listings.size() == SNAPSHOT_LIMIT)
-        {
-            // Count the remaining valid listings in bounded pages without retaining them in the snapshot.
-            uint32 afterId = listings.back().id;
-            std::vector<AuctionListing> page;
-            do
-            {
-                page.clear();
-                sAuctionMgr->GetAuctionsMap(auctioneer->getFaction())->GetListings(page, afterId, SNAPSHOT_LIMIT);
-                omitted += page.size();
-                if (!page.empty())
-                    afterId = page.back().id;
-            } while (page.size() == SNAPSHOT_LIMIT);
-        }
+        sAuctionMgr->GetAuctionsMap(auctioneer->getFaction())->GetListings(listings, 0, SNAPSHOT_LIMIT + 1);
+        // One extra listing detects truncation without scanning the rest of the house.
+        uint64 const omitted = SnapshotOmittedLowerBound(uint32(listings.size()));
+        if (omitted)
+            listings.pop_back();
         sInterval.Snapshot(listings.size(), SNAPSHOT_LIMIT, omitted);
         sTotalsDirty = true;
 
@@ -599,15 +593,18 @@ namespace
 
     void PlanPurchases(Player* bot, PlayerbotAI* botAI, Visit& visit)
     {
-        visit.buyPlanned = true;
         if (!sPlayerbotAIConfig->auctionBuyEnable)
+        {
+            visit.buyPlanned = true;
             return;
+        }
 
         uint64 const moneyNow = bot->GetMoney();
-        std::vector<BotAuctionPolicy::PurchaseCandidate> candidates;
-        uint32 evaluated = 0;
-        for (BotAuctionPolicy::SnapshotListing const& listing : visit.snapshot)
+        uint32 evaluatedThisSlice = 0;
+        while (visit.nextCandidate < visit.snapshot.size() && visit.evaluated < MAX_NEED_EVALUATIONS &&
+               evaluatedThisSlice < NEED_EVALUATIONS_PER_SLICE)
         {
+            BotAuctionPolicy::SnapshotListing const& listing = visit.snapshot[visit.nextCandidate++];
             if (listing.own || !listing.buyout || !listing.count)
                 continue;
 
@@ -623,18 +620,19 @@ namespace
                                                              visit.money.reserve))
                 continue;
 
-            if (evaluated >= MAX_NEED_EVALUATIONS)
-                break;
-
-            ++evaluated;
+            ++visit.evaluated;
+            ++evaluatedThisSlice;
             candidate.need = NeedFor(botAI, bot, listing.entry, listing.count);
             if (candidate.need != PricePolicy::BuyNeed::None)
-                candidates.push_back(candidate);
+                visit.candidates.push_back(candidate);
         }
 
-        visit.purchases = BotAuctionPolicy::SelectPurchases(candidates, visit.money, moneyNow, sPlayerbotAIConfig->auctionMaxPurchasesPerVisit);
-        SF_LOG_INFO("playerbots", "[AUCTION] %s buy plan: %u listings read, %u needed, %u chosen", visit.name.c_str(), evaluated,
-                    uint32(candidates.size()), uint32(visit.purchases.size()));
+        if (visit.nextCandidate < visit.snapshot.size() && visit.evaluated < MAX_NEED_EVALUATIONS)
+            return;
+        visit.buyPlanned = true;
+        visit.purchases = BotAuctionPolicy::SelectPurchases(visit.candidates, visit.money, moneyNow, sPlayerbotAIConfig->auctionMaxPurchasesPerVisit);
+        SF_LOG_INFO("playerbots", "[AUCTION] %s buy plan: %u listings read, %u needed, %u chosen", visit.name.c_str(), visit.evaluated,
+                    uint32(visit.candidates.size()), uint32(visit.purchases.size()));
     }
 
     // One purchase: the listing is read again by id (never a stored pointer), checked against the plan and the wallet,
@@ -773,7 +771,12 @@ namespace
                 ReservePolicy::Reserve const reserve =
                     ReservePolicy::ComputeReserve(ReserveFactsOf(bot), ReserveParams(), visit.moneyOnArrival);
                 visit.money = ReservePolicy::MakeVisitMoney(visit.moneyOnArrival, reserve);
-                TakeSnapshot(bot, auctioneer, visit);
+                if (!visit.snapshotTaken)
+                {
+                    TakeSnapshot(bot, auctioneer, visit);
+                    visit.snapshotTaken = true;
+                    break;
+                }
                 PlanSales(bot, botAI, visit);
                 SF_LOG_INFO("playerbots",
                             "[AUCTION] %s L%u visit: money %s reserve %s (repair %s goals %s held %s recipes %s) purchase budget %s deposit budget %s, "
@@ -803,7 +806,8 @@ namespace
                 if (!visit.buyPlanned)
                 {
                     PlanPurchases(bot, botAI, visit);
-                    visit.waitMs = StepDelayMs(urand(0, STEP_MAX_MS));
+                    if (visit.buyPlanned)
+                        visit.waitMs = StepDelayMs(urand(0, STEP_MAX_MS));
                     break;
                 }
                 if (visit.nextPurchase >= visit.purchases.size())
@@ -845,8 +849,11 @@ namespace
         BotRecord& record = sBots[visit.botGuid];
         record.busy = false;
         record.cancel = false;
-        record.visited = true;
-        record.lastEndMs = getMSTime();
+        if (StartsAuctionCooldown(visit.kind == Kind::Auction))
+        {
+            record.visited = true;
+            record.lastEndMs = getMSTime();
+        }
     }
 
     bool CancelRequested(uint64 botGuid)
@@ -1092,7 +1099,14 @@ void BotAuction::OnUpdate(uint32 diff)
             if (!visit.waitMs && slices)
             {
                 --slices;
+                auto const stepStart = std::chrono::steady_clock::now();
+                Phase const phase = visit.phase;
                 Step(visit);
+                auto const stepMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - stepStart).count();
+                if (stepMs >= 50)
+                    SF_LOG_WARN("playerbots", "[AUCTION] slow step bot=%s phase=%u elapsedMs=%llu", visit.name.c_str(),
+                        unsigned(phase), (unsigned long long)stepMs);
             }
         }
     }
@@ -1114,13 +1128,19 @@ void BotAuction::OnUpdate(uint32 diff)
     sInterval.tickUs.Add(uint64(std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - tickStart).count()));
 
+    auto const elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - tickStart).count();
+    if (elapsedMs >= 50)
+        SF_LOG_WARN("playerbots", "[AUCTION] slow tick elapsedMs=%llu visits=%u queue=%llu",
+            (unsigned long long)elapsedMs, unsigned(sVisits.size()), (unsigned long long)queue);
+
     uint32 const now = getMSTime();
     if (!sSummaryStarted)
     {
         sSummaryStarted = true;
         sLastSummaryMs = now;
     }
-    else if ((sTotalsDirty || [&]() { std::lock_guard<std::mutex> guard(sRecipeLock); return sRecipeCounters.bought || sRecipeCounters.budget || sRecipeCounters.limit || sBankCounters.visits; }()) && SummaryDue(getMSTimeDiff(sLastSummaryMs, now), sPlayerbotAIConfig->auctionSummaryMinutes))
+    else if ((sTotalsDirty || [&]() { std::unique_lock<std::mutex> guard(sRecipeLock, std::try_to_lock); return guard.owns_lock() && (sRecipeCounters.bought || sRecipeCounters.budget || sRecipeCounters.limit || sBankCounters.visits); }()) && SummaryDue(getMSTimeDiff(sLastSummaryMs, now), sPlayerbotAIConfig->auctionSummaryMinutes))
         LogSummary("interval");
 }
 
@@ -1158,7 +1178,7 @@ void BotAuction::LogSummary(char const* why)
     }
     sLastSummaryMs = getMSTime();
     sTotalsDirty = false;
-    SF_LOG_INFO("playerbots", "[AUCTION] summary (%s): %s tickAvgMs=%.3f tickMaxMs=%.3f tickSamples=%llu queueAvg=%.2f queueMax=%llu snapshotsAtCap=%llu snapshotsTruncated=%llu listingsOmitted=%llu mailBacklogMax=%llu recipeBought=%llu recipeLearned=%llu recipeSkippedBudget=%llu recipeSkippedLimit=%llu bankVisits=%llu bankDeposited=%llu bankWithdrawn=%llu bankFull=%llu",
+    SF_LOG_INFO("playerbots", "[AUCTION] summary (%s): %s tickAvgMs=%.3f tickMaxMs=%.3f tickSamples=%llu queueAvg=%.2f queueMax=%llu snapshotsAtCap=%llu snapshotsTruncated=%llu listingsOmittedAtLeast=%llu mailBacklogMax=%llu recipeBought=%llu recipeLearned=%llu recipeSkippedBudget=%llu recipeSkippedLimit=%llu bankVisits=%llu bankDeposited=%llu bankWithdrawn=%llu bankFull=%llu",
                 why, FormatTotals(sTotals).c_str(), sInterval.tickUs.Average() / 1000.0, double(sInterval.tickUs.max) / 1000.0,
                 static_cast<unsigned long long>(sInterval.tickUs.count), sInterval.queueDepth.Average(),
                 static_cast<unsigned long long>(sInterval.queueDepth.max), static_cast<unsigned long long>(sInterval.snapshotsAtCap),
@@ -1169,7 +1189,7 @@ void BotAuction::LogSummary(char const* why)
                 static_cast<unsigned long long>(bank.deposited), static_cast<unsigned long long>(bank.withdrawn),
                 static_cast<unsigned long long>(bank.full));
     if (sInterval.snapshotsTruncated)
-        SF_LOG_WARN("playerbots", "[AUCTION] snapshot truncation: %llu snapshots, %llu listings omitted in this interval",
+        SF_LOG_WARN("playerbots", "[AUCTION] snapshot truncation: %llu snapshots, %llu listings omitted at least in this interval",
                     static_cast<unsigned long long>(sInterval.snapshotsTruncated), static_cast<unsigned long long>(sInterval.listingsOmitted));
     sInterval = IntervalStats();
 }

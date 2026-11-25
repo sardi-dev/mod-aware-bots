@@ -257,6 +257,12 @@ inline void CountStyle(StyleCounts& counts, uint32_t guid, PlaystylePolicy::Shar
     ++counts[size_t(PlaystylePolicy::StyleFor(guid, shares))];
 }
 
+// The next fixed wall-clock boundary, or zero when periodic summaries are disabled.
+inline uint32_t NextSummaryBoundary(uint32_t now, uint32_t interval)
+{
+    return interval ? now + interval - now % interval : 0;
+}
+
 // Interval 0 turns the periodic line off (the line at shutdown still comes).
 inline bool SummaryDue(uint32_t lastAt, uint32_t now, uint32_t intervalSeconds, bool changed)
 {

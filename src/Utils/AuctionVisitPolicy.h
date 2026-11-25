@@ -37,6 +37,9 @@ constexpr uint32_t MAIL_PER_COLLECTION = 10;
 // A house with more listings than this is read up to the limit only, and the visit says so.
 constexpr uint32_t SNAPSHOT_LIMIT = 5000;
 
+constexpr bool StartsAuctionCooldown(bool auctionVisit) { return auctionVisit; }
+constexpr uint32_t SnapshotOmittedLowerBound(uint32_t fetched) { return fetched > SNAPSHOT_LIMIT ? 1 : 0; }
+
 // A mailbox within this many yards of the bot lets it collect (a player must stand at the box).
 constexpr float MAILBOX_YARDS = 25.0f;
 
