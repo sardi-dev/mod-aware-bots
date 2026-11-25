@@ -91,6 +91,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
   - Why: Every feature the module has is named in the README, marked Ready or In development.
 
 ### Fixed
+- **Auction routing and role poll safety** (2026-11-25)
+  - Summary: A bot with a due auction visit takes a higher need (repair, vendor, trainer, mail) first instead of a
+    quest giver, a forced auction visit is tried again only after ten minutes, slow auction work is logged at most once
+    a minute, and a bot answers a role poll only for the group that polled.
+  - Why: A review before deployment found a quest-giver loop and a possible endless walk to an unreachable auctioneer,
+    log lines every tick under load, and a late role answer that could land in a new group.
 - **Arathi bots stand idle less** (2026-11-25)
   - Summary: A guard above its node's planned count takes its new job instead of keeping the post, and an opening
     attacker moves on to the team's next target once its capture hold has run out.

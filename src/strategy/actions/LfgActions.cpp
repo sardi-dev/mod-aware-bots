@@ -228,11 +228,13 @@ bool GroupRolePollAction::Execute(Event /*event*/)
         return false;
 
     uint32 const roles = GetLfgRoles(bot);
+    uint64 const polledGroup = group->GetGUID();
     // What HandleGroupSetRolesOpcode does for a member who sets the own role (Handlers/GroupHandler.cpp), on the world
     // thread like the other finder calls.
-    QueueLfgCall(bot, "GroupSetRole", [roles](Player* p)
+    QueueLfgCall(bot, "GroupSetRole", [roles, polledGroup](Player* p)
     {
-        if (Group* g = p->GetGroup())
+        // Only for the group that polled: the bot may have changed groups before the world thread runs this.
+        if (Group* g = p->GetGroup(); g && g->GetGUID() == polledGroup)
         {
             g->SetMemberRole(p->GetGUID(), roles);
             g->SendUpdate();

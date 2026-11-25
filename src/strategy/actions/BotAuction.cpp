@@ -1077,6 +1077,20 @@ void BotAuction::OnStartup()
         SF_LOG_WARN("playerbots", "[AUCTION] Rate.Auction.Deposit, Cut or Time is not 1: the bots' deposit and cut arithmetic assumes 1");
 }
 
+namespace
+{
+// Slow auction work is logged at most once a minute, so a slow server is not slowed further by its own warnings.
+bool SlowLogDue()
+{
+    static uint32 lastMs = 0;
+    uint32 const now = getMSTime();
+    if (lastMs && getMSTimeDiff(lastMs, now) < 60 * IN_MILLISECONDS)
+        return false;
+    lastMs = now ? now : 1;
+    return true;
+}
+}  // namespace
+
 void BotAuction::OnUpdate(uint32 diff)
 {
     if (!sPlayerbotAIConfig->auctionEnable && !sPlayerbotAIConfig->bankErrandsEnable && !sConfigMgr->GetBoolDefault("AiPlayerbot.RecipeBuying.Enable", false))
@@ -1104,7 +1118,7 @@ void BotAuction::OnUpdate(uint32 diff)
                 Step(visit);
                 auto const stepMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - stepStart).count();
-                if (stepMs >= 50)
+                if (stepMs >= 50 && SlowLogDue())
                     SF_LOG_WARN("playerbots", "[AUCTION] slow step bot=%s phase=%u elapsedMs=%llu", visit.name.c_str(),
                         unsigned(phase), (unsigned long long)stepMs);
             }
@@ -1130,7 +1144,7 @@ void BotAuction::OnUpdate(uint32 diff)
 
     auto const elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - tickStart).count();
-    if (elapsedMs >= 50)
+    if (elapsedMs >= 50 && SlowLogDue())
         SF_LOG_WARN("playerbots", "[AUCTION] slow tick elapsedMs=%llu visits=%u queue=%llu",
             (unsigned long long)elapsedMs, unsigned(sVisits.size()), (unsigned long long)queue);
 

@@ -989,14 +989,20 @@ bool NewRpgWanderNpcAction::Execute(Event /*event*/)
         // A quest giver with something to offer first, then an errand (BT-253), then AC's random NPC visit.
         BotGuid npcOrGo = BotGuid::Empty;
         Errand errand = Errand::None;
-        if (BotAuction::SoakVisitDue(botAI, bot))
+        uint32 const nowMs = getMSTime();
+        bool const forcePaused = info.lastForcedAuctionMs && getMSTimeDiff(info.lastForcedAuctionMs, nowMs) < 10 * MINUTE * IN_MILLISECONDS;
+        if (!forcePaused && BotAuction::SoakVisitDue(botAI, bot))
         {
             ErrandPolicy::Town town;
             ErrandTargets const targets = FindErrandTargets(botAI, bot, town);
-            if (town.auctionDue && ErrandPolicy::Choose(town, 0) == Errand::Auction)
+            // A higher need (repair, vendor, trainer, mail) still comes first; otherwise the due auction visit.
+            Errand const chosen = town.auctionDue ? ErrandPolicy::Choose(town, 0) : Errand::None;
+            if (chosen != Errand::None && targets[size_t(chosen)])
             {
-                errand = Errand::Auction;
-                npcOrGo = targets[size_t(errand)]->GetGUID();
+                errand = chosen;
+                npcOrGo = targets[size_t(chosen)]->GetGUID();
+                if (chosen == Errand::Auction)
+                    info.lastForcedAuctionMs = nowMs ? nowMs : 1;
             }
         }
         if (npcOrGo.IsEmpty())

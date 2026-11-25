@@ -141,6 +141,9 @@ struct NewRpgInfo
 
     // #BT-015: getMSTime() of the last trip to a camp hub to repair worn gear (0 = none yet)
     uint32 lastRepairTripMs{0};
+    // getMSTime() when a due auction visit was last forced (0 = never): an unreachable auctioneer is tried again only
+    // after a pause.
+    uint32 lastForcedAuctionMs{0};
 
     // Debug scenario (.botscenario) / probe (.botprobe) state used to live here (scenarioStartT ...
     // scenarioAttackEntry, ArmWanderScenario) so NewRpgStatusUpdateAction/RandomChangeStatus/etc.
