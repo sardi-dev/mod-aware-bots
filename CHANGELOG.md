@@ -91,6 +91,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
   - Why: Every feature the module has is named in the README, marked Ready or In development.
 
 ### Fixed
+- **A timed-out dock wait counts as a transport failure for a hand-in** (2026-11-25)
+  - Summary: When a bot on a hand-in trip gives up waiting for a boat or zeppelin, the quest gets the transport
+    failure retry delay, as a stalled walk to the transport already did.
+  - Why: Repeated dock wait timeouts at the same dock (Outland) were retried straight away.
 - **Looting and selling safety for the earned gear change** (2026-11-25)
   - Summary: The loot loop stops as soon as an item source (a lockbox, a clam, milling or prospecting) is released by
     the core after its last item; items a quest hands out to be used count as quest items; gear the bot wants is never

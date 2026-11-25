@@ -46,11 +46,12 @@ inline uint32_t Delay(uint32_t tries)
 constexpr char const* STUCK_ON_THE_WAY = "stuck on the way";
 constexpr char const* STOOD_STILL = "stood still";
 constexpr char const* TRANSPORT_WALK_STALLED = "the walk to the transport stalled";
+constexpr char const* TRANSPORT_WAIT_TIMED_OUT = "waiting for the transport timed out";
 
 inline bool IsStuckReason(char const* why)
 {
     return why && (!std::strcmp(why, STUCK_ON_THE_WAY) || !std::strcmp(why, STOOD_STILL) ||
-                   !std::strcmp(why, TRANSPORT_WALK_STALLED));
+                   !std::strcmp(why, TRANSPORT_WALK_STALLED) || !std::strcmp(why, TRANSPORT_WAIT_TIMED_OUT));
 }
 
 inline bool IsTransportWalkStall(char const* why)

@@ -1656,9 +1656,13 @@ int32 NewRpgBaseAction::RoamTransportMove(WorldPosition const& dest, bool maySta
     auto abandon = [&](char const* why) -> int32
     {
         bool const handInWalkStalled = HandInTripOwns(trip.dest) && QuestRetryPolicy::IsTransportWalkStall(why);
+        // A dock wait that timed out is a transport failure too: it gets the stuck retry delay, not the next tick.
+        bool const handInWaitTimedOut = HandInTripOwns(trip.dest) && !std::strcmp(why, "dock-wait-timeout");
         EndTrip(trip, bot, now, why);
         if (handInWalkStalled)
             FailHandInTrip(QuestRetryPolicy::TRANSPORT_WALK_STALLED);
+        else if (handInWaitTimedOut)
+            FailHandInTrip(QuestRetryPolicy::TRANSPORT_WAIT_TIMED_OUT);
         return -1;
     };
 
