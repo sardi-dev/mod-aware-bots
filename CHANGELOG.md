@@ -91,6 +91,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
   - Why: Every feature the module has is named in the README, marked Ready or In development.
 
 ### Fixed
+- **Transport walks no longer stall on a moving measuring point** (2026-11-24)
+  - Summary: Walks to docks, flight masters and portals measure progress against the current route point instead of
+    the look-ahead target; at a dock the timer resets when the bot switches from the land point to the dock node;
+    portal and taxi walks record progress before checking the timeout; stalls log the bot, target and route entry.
+  - Why: About 430 quest give-ups a day ended with "the walk to the transport stalled", many of them while the bot
+    was still closing in.
 - **Bots get to loot they can see** (2026-11-24)
   - Summary: After two failed walks to a visible corpse within reach, a bot tries a point just short of it; a walk
     that gets at least a yard closer clears earlier failures, and a walk that stops making progress still gives up.

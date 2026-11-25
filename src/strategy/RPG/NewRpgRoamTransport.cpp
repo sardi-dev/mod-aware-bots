@@ -54,6 +54,7 @@
 #include "Transport.h"
 #include "TravelMgr.h"
 #include "CrossMapTripPolicy.h"
+#include "TransportWalkPolicy.h"
 #include "NoRouteCache.h"
 #include "TransportMgr.h"
 #include "TravelNode.h"
@@ -175,6 +176,8 @@ namespace
         uint32 prevMap = 0;             // the map the previous hop left from (a re-plan may not go back there)
         uint32 portalMs = 0;            // when a portal leg teleported the bot (ResumeAfterReset window)
         size_t walkTarget = 0;          // the last look-ahead point a walk MoveTo was issued for (wave 34 catch-up)
+        size_t dockTargetIdx = size_t(-1);
+        bool dockNodeTarget = false;
         bool flew = false;              // a Taxi-phase tick saw the bot in flight (wave 36 taxi-not-landed)
         uint32 driverT = 0;             // NewRpgInfo::startT of the status that last drove the trip (wave 41)
         int32 driverStatus = -1;        // ... and that status (NewRpgStatus)
@@ -1671,6 +1674,10 @@ int32 NewRpgBaseAction::RoamTransportMove(WorldPosition const& dest, bool maySta
     // portal-walk-stall ... point=57/60", status IDLE). A second stall at the same point still abandons.
     auto stall = [&](char const* why, WorldPosition const& target) -> int32
     {
+        SF_LOG_INFO("playerbots", "[ROAMTRIP] %s walk-target %s entry=%u map=%u bot=(%.1f,%.1f,%.1f) target=(%.1f,%.1f,%.1f) point=%u/%u",
+                    bot->GetName().c_str(), why, trip.idx < trip.pts.size() ? trip.pts[trip.idx].entry : 0,
+                    bot->GetMapId(), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
+                    target.GetPositionX(), target.GetPositionY(), target.GetPositionZ(), uint32(trip.idx), uint32(trip.pts.size()));
         // BT-019 (owner 2026-11-08): the stuck teleport is only for a bot no real player can see; a seen one
         // abandons the trip like a second stall does.
         // BT-210 (owner rule: no teleport on a quest trip): a hand-in trip's route abandons instead; MoveFarTo walks on
@@ -1812,6 +1819,7 @@ int32 NewRpgBaseAction::RoamTransportMove(WorldPosition const& dest, bool maySta
         trip.pts = std::move(pts);
         trip.idx = start;
         trip.walkTarget = start;
+        trip.dockTargetIdx = size_t(-1);
         trip.phase = TripPhase::Walk;
         trip.startMs = trip.phaseMs = trip.progressMs = now;
         trip.bestDist = -1.0f;
@@ -1984,6 +1992,12 @@ int32 NewRpgBaseAction::RoamTransportMove(WorldPosition const& dest, bool maySta
         {
             if (from.point.GetMapId() == bot->GetMapId() && !PortalPointReached(bot, from.point))
             {
+                float const d = Dist3d(bot, from.point);
+                if (TransportWalkPolicy::Improved(trip.bestDist, d))
+                {
+                    trip.bestDist = d;
+                    trip.progressMs = now;
+                }
                 if (getMSTimeDiff(trip.progressMs, now) > kWalkStallMs)
                     return stall("portal-walk-stall", from.point);
                 return MoveTo(from.point.GetMapId(), from.point.GetPositionX(), from.point.GetPositionY(),
@@ -2082,14 +2096,14 @@ int32 NewRpgBaseAction::RoamTransportMove(WorldPosition const& dest, bool maySta
                                  bot->GetExactDist(tn->x, tn->y, tn->z) > INTERACTION_DISTANCE * 2 - 1.0f;
             if (reach > INTERACTION_DISTANCE || (flightMaster && nodeFar))
             {
-                if (getMSTimeDiff(trip.progressMs, now) > kWalkStallMs)
-                    return stall("taxi-walk-stall", from.point);  // the node is the flight master's spawn
                 float const d = Dist3d(bot, from.point);
-                if (trip.bestDist < 0.0f || d + 3.0f < trip.bestDist)
+                if (TransportWalkPolicy::Improved(trip.bestDist, d))
                 {
                     trip.bestDist = d;
                     trip.progressMs = now;
                 }
+                if (getMSTimeDiff(trip.progressMs, now) > kWalkStallMs)
+                    return stall("taxi-walk-stall", from.point);
                 if (IsWaitingForLastMove(MovementPriority::MOVEMENT_NORMAL))
                     return 0;
                 if (flightMaster)
@@ -2168,23 +2182,34 @@ int32 NewRpgBaseAction::RoamTransportMove(WorldPosition const& dest, bool maySta
                 {
                     trip.phase = TripPhase::Walk;
                     WorldPosition target = from.point;
-                    if (trip.idx > 0 && IsWalkPoint(trip.pts[trip.idx - 1]) &&
-                        trip.pts[trip.idx - 1].point.GetMapId() == bot->GetMapId())
+                    bool const hasLand = trip.idx > 0 && IsWalkPoint(trip.pts[trip.idx - 1]) &&
+                                         trip.pts[trip.idx - 1].point.GetMapId() == bot->GetMapId();
+                    float const landDist = hasLand ? Dist3d(bot, trip.pts[trip.idx - 1].point) : 0.0f;
+                    bool const useNode = TransportWalkPolicy::UseDockNode(
+                        trip.dockTargetIdx == trip.idx && trip.dockNodeTarget, hasLand, landDist, kPointReached);
+                    if (!useNode)
                         target = trip.pts[trip.idx - 1].point;
+                    if (trip.dockTargetIdx != trip.idx || trip.dockNodeTarget != useNode)
+                    {
+                        trip.dockTargetIdx = trip.idx;
+                        trip.dockNodeTarget = useNode;
+                        trip.bestDist = -1.0f;
+                    }
                     float const d = Dist3d(bot, target);
-                    if (trip.bestDist < 0.0f || d + 3.0f < trip.bestDist)
+                    if (TransportWalkPolicy::Improved(trip.bestDist, d))
                     {
                         trip.bestDist = d;
                         trip.progressMs = now;
                     }
                     if (getMSTimeDiff(trip.progressMs, now) > kWalkStallMs)
-                        // #847: only to the land point before the dock (the board node itself is the deck / the
-                        // ship's origin at its stop, in the shaft or on the water while the transport is away)
-                        return target != from.point ? stall("dock-walk-stall", target) : abandon("dock-walk-stall");
-                    if (d < kPointReached)
                     {
-                        // At the last land point but still outside the dock radius (a long pier): head for the node.
-                        target = from.point;
+                        if (target != from.point)
+                            return stall("dock-walk-stall", target);
+                        SF_LOG_INFO("playerbots", "[ROAMTRIP] %s walk-target dock-walk-stall entry=%u map=%u bot=(%.1f,%.1f,%.1f) target=(%.1f,%.1f,%.1f) point=%u/%u",
+                                    bot->GetName().c_str(), from.entry, bot->GetMapId(), bot->GetPositionX(),
+                                    bot->GetPositionY(), bot->GetPositionZ(), target.GetPositionX(),
+                                    target.GetPositionY(), target.GetPositionZ(), uint32(trip.idx), uint32(trip.pts.size()));
+                        return abandon("dock-walk-stall");
                     }
                     if (IsWaitingForLastMove(MovementPriority::MOVEMENT_NORMAL))
                         return 0;
@@ -2641,8 +2666,8 @@ int32 NewRpgBaseAction::RoamTransportMove(WorldPosition const& dest, bool maySta
         target = j;
     }
     WorldPosition const& tp = trip.pts[target].point;
-    float const d = Dist3d(bot, tp);
-    if (trip.bestDist < 0.0f || d + 3.0f < trip.bestDist)
+    float const d = Dist3d(bot, cur);
+    if (TransportWalkPolicy::Improved(trip.bestDist, d))
     {
         trip.bestDist = d;
         trip.progressMs = now;
