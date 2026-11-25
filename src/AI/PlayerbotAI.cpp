@@ -274,6 +274,8 @@ PlayerbotAI::PlayerbotAI(Player* bot)
     botOutgoingPacketHandlers.AddHandler(SMSG_LFD_PROPOSAL_UPDATE, "lfg proposal");
     // A vote to kick a member of a finder group: the bots of the group answer it (LfgBootVoteAction).
     botOutgoingPacketHandlers.AddHandler(SMSG_LFD_BOOT_PROPOSAL_UPDATE, "lfg boot vote");
+    // The core's group role poll before a group's finder join (GroupRolePollAction).
+    botOutgoingPacketHandlers.AddHandler(SMSG_GROUP_ROLE_POLL_INFORM, "group role poll");
 
     // #193 (S7 of epic #163, AC Bot/PlayerbotAI.cpp:194-195): SMSG_TRADE_STATUS/SMSG_TRADE_STATUS_EXTENDED
     // -> "accept trade"/"trade status extended" (TradeStatusAction/TradeStatusExtendedAction).

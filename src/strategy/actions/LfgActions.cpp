@@ -221,6 +221,29 @@ bool LfgRoleCheckAction::Execute(Event /*event*/)
     return true;
 }
 
+bool GroupRolePollAction::Execute(Event /*event*/)
+{
+    Group* group = bot->GetGroup();
+    if (!group)
+        return false;
+
+    uint32 const roles = GetLfgRoles(bot);
+    // What HandleGroupSetRolesOpcode does for a member who sets the own role (Handlers/GroupHandler.cpp), on the world
+    // thread like the other finder calls.
+    QueueLfgCall(bot, "GroupSetRole", [roles](Player* p)
+    {
+        if (Group* g = p->GetGroup())
+        {
+            g->SetMemberRole(p->GetGUID(), roles);
+            g->SendUpdate();
+        }
+    });
+
+    SF_LOG_INFO("playerbots", "Bot %s <%s>: group role set to %u for the role poll", BotGuid(bot->GetGUID()).ToString().c_str(),
+                bot->GetName().c_str(), roles);
+    return true;
+}
+
 // SMSG_LFD_BOOT_PROPOSAL_UPDATE is the writer in WorldSession::SendLfgBootProposalUpdate (Handlers/LFGHandler.cpp): the
 // target guid in a mask and byte sequence, with the flags, the votes needed, the time left, the reason and the counts
 // in between.

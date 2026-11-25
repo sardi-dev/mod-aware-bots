@@ -115,6 +115,7 @@ WorldPacketHandlerStrategy::WorldPacketHandlerStrategy(PlayerbotAI* botAI) : Pas
     // pass-throughs for the LFG role check answer and the master's teleport in/out copy.
     supported.push_back("lfg role check");
     supported.push_back("lfg boot vote");
+    supported.push_back("group role poll");
     supported.push_back("lfg teleport");
 
     // #210 S10 G4 (AC WorldPacketHandlerStrategy.cpp constructor): same-name pass-through for the

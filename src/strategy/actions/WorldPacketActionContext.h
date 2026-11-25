@@ -115,6 +115,7 @@ public:
         creators["lfg leave"] = &WorldPacketActionContext::lfg_leave;
         creators["lfg role check"] = &WorldPacketActionContext::lfg_role_check;
         creators["lfg boot vote"] = &WorldPacketActionContext::lfg_boot_vote;
+        creators["group role poll"] = &WorldPacketActionContext::group_role_poll;
         creators["lfg accept"] = &WorldPacketActionContext::lfg_accept;
         creators["lfg teleport"] = &WorldPacketActionContext::lfg_teleport;
         creators["lfg teleport retry"] = &WorldPacketActionContext::lfg_teleport_retry;
@@ -197,6 +198,7 @@ private:
     static Action* lfg_leave(PlayerbotAI* botAI) { return new LfgLeaveAction(botAI); }
     static Action* lfg_role_check(PlayerbotAI* botAI) { return new LfgRoleCheckAction(botAI); }
     static Action* lfg_boot_vote(PlayerbotAI* botAI) { return new LfgBootVoteAction(botAI); }
+    static Action* group_role_poll(PlayerbotAI* botAI) { return new GroupRolePollAction(botAI); }
     static Action* lfg_accept(PlayerbotAI* botAI) { return new LfgAcceptAction(botAI); }
     static Action* lfg_teleport(PlayerbotAI* botAI) { return new LfgTeleportAction(botAI); }
     static Action* lfg_teleport_retry(PlayerbotAI* botAI) { return new LfgTeleportRetryAction(botAI); }

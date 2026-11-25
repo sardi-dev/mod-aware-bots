@@ -57,6 +57,17 @@ public:
     bool isUseful() override { return true; }
 };
 
+// A group role poll (SMSG_GROUP_ROLE_POLL_INFORM): the core refuses a group's finder join until every member has a
+// group role, and polls them when one is missing. A player answers by picking a role; the bot sets its own, by spec.
+class GroupRolePollAction : public Action
+{
+public:
+    GroupRolePollAction(PlayerbotAI* botAI) : Action(botAI, "group role poll") {}
+
+    bool Execute(Event event) override;
+    bool isUseful() override { return true; }
+};
+
 // A vote to kick a member of a finder group (SMSG_LFD_BOOT_PROPOSAL_UPDATE). A bot never kicks a player: it votes yes
 // to remove a bot a player started the vote against, and no when the victim is a player. The victim does not vote.
 class LfgBootVoteAction : public Action

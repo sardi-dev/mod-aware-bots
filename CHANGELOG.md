@@ -91,6 +91,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
   - Why: Every feature the module has is named in the README, marked Ready or In development.
 
 ### Fixed
+- **Bots answer the group role poll, so a group with bots can queue** (2026-11-25)
+  - Summary: When the core polls a group for roles before its finder join, each bot sets its own group role from its
+    spec, as a player picks one in the role window.
+  - Why: The core refuses a group's finder join until every member has a role and gives no join result; a group of a
+    player and alt bots could never queue (seen with the level 90 test groups for Shado-Pan Monastery).
 - **Healers come to a tank that fights out of their sight** (2026-11-25)
   - Summary: A healer takes its line-of-sight path to the tank when the tank is in combat, not only when the healer is;
     a healer or a resurrecting bot walks to a member or body it cannot see instead of stopping at a fixed standoff
