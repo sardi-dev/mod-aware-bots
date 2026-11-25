@@ -292,10 +292,13 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
         return true;
 
     NewRpgInfo& info = botAI->GetRpgInfo();
-    if (dest != info.moveFarPos)
+    bool const newMove = dest != info.moveFarPos || info.moveFarSerial != info.serial ||
+                         info.moveFarMap != bot->GetMapId();
+    if (newMove)
     {
         // clear stuck information if it's a new dest
         info.SetMoveFarTo(dest);
+        info.moveFarMap = bot->GetMapId();
     }
 
     // #218 (BEYOND AC, MoP only - NewRpgRoamTransport.h): a destination on another continent (only the #218 camp
@@ -314,6 +317,38 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
             info.ChangeToIdle();
             return true;
         }
+    }
+
+    // Long quest trips can benefit from a transport route before a ground walk stalls.
+    if (newMove && RoamTransport::Enabled() && dest.GetMapId() == bot->GetMapId() &&
+        bot->GetExactDist(&dest) > 2000.0f &&
+        (HandInTripOwns(dest) || ItemFetchOwns(dest) || InteractTripOwns(dest) || ExploreTripOwns(dest)))
+    {
+        int32 const trip = RoamTransportMove(dest, true, true);
+        if (trip >= 0)
+            return trip != 0;
+    }
+
+    uint32 const activeNow = botAI->GetQuestClockMs();
+    float const disToDest = bot->GetDistance(dest);
+    if (disToDest + 5.0f < info.nearestMoveFarDis)
+    {
+        info.nearestMoveFarDis = disToDest;
+        info.stuckTs = activeNow;
+        info.stuckAttempts = 0;
+        QuestMoveProgress::DestinationProgress(info.moveFarProgress, activeNow);
+    }
+
+    // Track the fixed endpoint of the current movement leg, including while waiting for the spline.
+    LastMovement& progressMove = AI_VALUE(LastMovement&, "last movement");
+    if (bot->isMoving() && progressMove.lastMoveToMapId == bot->GetMapId() &&
+        QuestMoveProgress::LegProgress(info.moveFarProgress, progressMove.lastMoveToX, progressMove.lastMoveToY,
+                                       progressMove.lastMoveToZ,
+                                       bot->GetExactDist(progressMove.lastMoveToX, progressMove.lastMoveToY,
+                                                         progressMove.lastMoveToZ), activeNow))
+    {
+        info.stuckTs = activeNow;
+        info.stuckAttempts = 0;
     }
 
     // performance optimization
@@ -350,10 +385,8 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
     }
 
     // stuck check
-    float disToDest = bot->GetDistance(dest);
     // BT-230: "no progress for so long" counts active time (QuestClockPolicy.h). A rotating bot stands still between its
     // activity windows, so on the wall clock five failed tries in one window already read as 90 s stuck.
-    uint32 const activeNow = botAI->GetQuestClockMs();
     // #218 (BEYOND AC, MoP only): 30 s without progress, try the travel graph once (per destination per 10 min). A
     // route with an elevator / tram / boat / zeppelin / flight / portal leg is followed instead of waiting for AC's
     // 90 s stuck teleport below; a plain walking route changes nothing and AC's check runs as before.
@@ -370,17 +403,7 @@ bool NewRpgBaseAction::MoveFarTo(WorldPosition dest)
             return trip != 0;
         }
     }
-    // Require a meaningful improvement (5yd) to reset the stuck counter.
-    // The old 1yd threshold was small enough that bots oscillating back
-    // and forth around an obstacle would keep "making progress" forever
-    // and never trigger the teleport recovery below.
-    if (disToDest + 5.0f < info.nearestMoveFarDis)
-    {
-        info.nearestMoveFarDis = disToDest;
-        info.stuckTs = activeNow;
-        info.stuckAttempts = 0;
-    }
-    else if (++info.stuckAttempts >= 5 && activeNow - info.stuckTs >= stuckTime)
+    if (++info.stuckAttempts >= 5 && activeNow - info.stuckTs >= stuckTime)
     {
         // No meaningful progress toward dest for `stuckTime`: fall
         // back to teleporting directly so the bot can get on with

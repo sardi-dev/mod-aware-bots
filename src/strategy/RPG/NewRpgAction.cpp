@@ -331,6 +331,11 @@ bool NewRpgStatusUpdateAction::Execute(Event /*event*/)
     // The 3 minutes are active time (BT-230 clock): a bot on the activity rotation stands still between its windows by
     // design, and the wall clock flagged 42 of them in the first 20 minutes after build 4 (BT-257).
     {
+        if (info.stillWatchSerial != info.serial)
+        {
+            info.stillWatch = RoamPolicy::StillWatch{};
+            info.stillWatchSerial = info.serial;
+        }
         bool const wantsToMove = status == RPG_GO_GRIND || status == RPG_GO_CAMP || status == RPG_WANDER_RANDOM ||
                                  status == RPG_DO_QUEST || status == RPG_DO_GATHER;
         bool const watching = wantsToMove && bot->IsAlive() && !bot->IsInCombat() && bot->IsStandState() &&

@@ -91,6 +91,13 @@ and this project follows [Semantic Versioning](https://semver.org/).
   - Why: Every feature the module has is named in the README, marked Ready or In development.
 
 ### Fixed
+- **Quest walks keep their progress** (2026-11-25)
+  - Summary: A new trip to the same spot starts with a fresh stall clock; progress counts while a movement is still
+    running and along the current movement leg (a detour can refresh the clock for at most three minutes); trips over
+    2000 yards try the travel graph (boats, flights, portals) first; the stand-still watch resets on a task change;
+    exploration trips follow the no-teleport rule of the other quest trips.
+  - Why: About 1,070 quest walks a day ended as "stuck on the way" or "stood still", some seconds after they started
+    because of the previous trip's stall state.
 - **Transport walks no longer stall on a moving measuring point** (2026-11-24)
   - Summary: Walks to docks, flight masters and portals measure progress against the current route point instead of
     the look-ahead target; at a dock the timer resets when the bot switches from the land point to the dock node;

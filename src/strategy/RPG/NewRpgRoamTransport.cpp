@@ -1685,7 +1685,7 @@ int32 NewRpgBaseAction::RoamTransportMove(WorldPosition const& dest, bool maySta
         if (trip.stuckTpIdx == trip.idx || target.GetMapId() != bot->GetMapId() || bot->IsInFlight() ||
             bot->GetTransport() || bot->GetVehicle() || bot->IsBeingTeleported() ||
             botAI->HasPlayerNearby(bot->GetMap()->GetVisibilityRange()) || HandInTripOwns(trip.dest) ||
-            ItemFetchOwns(trip.dest) || InteractTripOwns(trip.dest))
+            ItemFetchOwns(trip.dest) || InteractTripOwns(trip.dest) || ExploreTripOwns(trip.dest))
             return abandon(why);
         trip.stuckTpIdx = trip.idx;
         trip.progressMs = trip.phaseMs = now;

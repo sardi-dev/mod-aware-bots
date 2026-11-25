@@ -13,6 +13,7 @@
 #include "BotGuid.h"
 #include "PlayerbotAIConfig.h"
 #include "QuestClockPolicy.h"
+#include "QuestMoveProgress.h"
 #include "RoamPolicy.h"
 #include "Timer.h"
 #include "WorldPosition.h"
@@ -129,10 +130,14 @@ struct NewRpgInfo
     uint32 stuckTs{0};
     uint32 stuckAttempts{0};
     WorldPosition moveFarPos;
+    uint32 moveFarSerial{0};
+    uint32 moveFarMap{0};
+    QuestMoveProgress::Watch moveFarProgress;
     // END MOVE_FAR
 
     // BT-254: where and since when the bot has stood still while its status wants it to move
     RoamPolicy::StillWatch stillWatch;
+    uint32 stillWatchSerial{0};
 
     // #BT-015: getMSTime() of the last trip to a camp hub to repair worn gear (0 = none yet)
     uint32 lastRepairTripMs{0};
