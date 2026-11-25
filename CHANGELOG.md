@@ -91,6 +91,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
   - Why: Every feature the module has is named in the README, marked Ready or In development.
 
 ### Fixed
+- **Arathi bots stand idle less** (2026-11-25)
+  - Summary: A guard above its node's planned count takes its new job instead of keeping the post, and an opening
+    attacker moves on to the team's next target once its capture hold has run out.
+  - Why: In a 10v10 Arathi Basin the bots stood still about 9 of 24 minutes each; guard surpluses and finished
+    capture holds were among the idle decisions.
 - **Bots answer the group role poll, so a group with bots can queue** (2026-11-25)
   - Summary: When the core polls a group for roles before its finder join, each bot sets its own group role from its
     spec, as a player picks one in the role window.

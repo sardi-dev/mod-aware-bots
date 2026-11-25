@@ -1004,6 +1004,10 @@ void AssignJobs(Record& r, uint32 t, uint32 nowMs, bool& changed)
     // BT-481: a casual bot may keep its old slot for a refresh after a stance change, except a bot in the middle of the
     // capture cast and a slot that would leave a node without any guard (the node is never left empty by a late bot).
     uint32 guardsAt[Ab::NODE_COUNT] = { 0, 0, 0, 0, 0 };
+    uint32 guardsPlanned[Ab::NODE_COUNT] = { 0, 0, 0, 0, 0 };
+    for (Ab::Slot const& slot : team.slots)
+        if (slot.job == Ab::Job::GUARD && slot.node < r.map->nodeCount)
+            ++guardsPlanned[slot.node];
     for (auto const& entry : team.members)
     {
         Member const& m = entry.second;
@@ -1018,7 +1022,9 @@ void AssignJobs(Record& r, uint32 t, uint32 nowMs, bool& changed)
         if (!m->assigned || m->slot != a.slot)
         {
             bool const emptiesNode = a.slot.job == Ab::Job::GUARD && a.slot.node < r.map->nodeCount && !guardsAt[a.slot.node];
-            if (m->assigned && BgLeader::MayKeepRole(m->keepSlot, m->casting || emptiesNode))
+            bool const surplus = r.map->kind == BgNodeMap::Kind::ARATHI && m->assigned && m->slot.job == Ab::Job::GUARD && m->slot.node < r.map->nodeCount &&
+                Ab::SurplusGuard(m->slot, guardsAt[m->slot.node], guardsPlanned[m->slot.node]);
+            if (m->assigned && !surplus && BgLeader::MayKeepRole(m->keepSlot, m->casting || emptiesNode))
                 continue;
             if (m->assigned && m->slot.job == Ab::Job::GUARD && m->slot.node < r.map->nodeCount && guardsAt[m->slot.node])
                 --guardsAt[m->slot.node];
@@ -2064,6 +2070,8 @@ void Refresh(Record& r, Battleground* bg, uint32 nowMs, uint8 strategyAlliance, 
         for (uint8 n = 0; n < r.map->nodeCount; ++n)
         {
             mixIn(uint64(team.sitState[n]));
+            mixIn(r.map->kind == BgNodeMap::Kind::ARATHI && team.sit[n] == Ab::NodeSituation::CAPPING &&
+                  team.captureAgeMs[n] >= Ab::StayAfterCastMs(*r.map) ? 1 : 0);
             mixIn(team.hardened[n] ? 1 : 0);
             mixIn(team.gathered[n] ? 1 : 0);
         }

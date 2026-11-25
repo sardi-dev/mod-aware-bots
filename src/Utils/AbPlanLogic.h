@@ -1163,6 +1163,11 @@ struct Assignment
     Slot slot;
 };
 
+inline bool SurplusGuard(Slot const& previous, std::uint32_t current, std::uint32_t planned)
+{
+    return previous.job == Job::GUARD && current > planned;
+}
+
 // Fills the slots in order, each with its best-scoring free candidate (ties by the GUID hash, then the GUID). Candidates
 // without a slot become the mobile reserve; a slot nobody fits (a raider slot without a stealth class) stays empty.
 inline std::vector<Assignment> Assign(std::vector<Candidate> const& candidates, std::vector<Slot> const& slots,
@@ -1746,7 +1751,10 @@ inline std::vector<Option> Options(DecisionContext const& c)
                 add(Kind::CLOSE_OUT, c.closeOutNode, SCORE_CLOSE_OUT);
 
             // The node the group is after: the opening group's own node, else the team's choice (casual: the nearest).
-            bool const openingGroup = c.job == Job::ASSAULT && c.slotNode < NODE_COUNT;
+            bool openingGroup = c.job == Job::ASSAULT && c.slotNode < c.map->nodeCount;
+            if (c.map->kind == BgNodeMap::Kind::ARATHI && openingGroup && c.sit[c.slotNode] == NodeSituation::CAPPING && Plays(c, Tier::GOOD) &&
+                c.captureAgeMs[c.slotNode] >= StayAfterCastMs(*c.map))
+                openingGroup = false;
             std::uint8_t target = openingGroup ? c.slotNode : Plays(c, Tier::GOOD) ? c.assaultNode : c.nearestNode;
             if (target == NODE_NONE)
                 target = c.nearestNode;
