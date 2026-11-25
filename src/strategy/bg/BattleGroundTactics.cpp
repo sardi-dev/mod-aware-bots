@@ -6,6 +6,7 @@
 
 #include "BattleGroundTactics.h"
 #include "BgRealType.h"
+#include "BgObjectiveTravel.h"
 #include "BotCompat_C.h"
 #include <cstdio>
 #include <optional>
@@ -3781,9 +3782,6 @@ bool BGTactics::selectObjective(bool reset)
     return false;
 }
 
-// How far one hop of a far Deepwind Gorge objective reaches (see moveToObjective).
-constexpr float DG_HOP_YARDS = 70.0f;
-
 bool BGTactics::moveToObjective(bool ignoreDist)
 {
     if (sPlayerbotAIConfig->bgIdleLog)
@@ -3843,65 +3841,64 @@ bool BGTactics::moveToObjective(bool ignoreDist)
 
         // Deepwind Gorge has no waypoint paths and its nodes lie 250 to 450 yd from the bases. Live check 2026-11-19: no bot
         // left its base in 10 minutes ("move to objective" failed on the whole distance), while bots teleported next to
-        // a node captured it. A far objective is walked in hops: the first point of the walkable path that is at least
-        // DG_HOP_YARDS away, or a point of that length on the straight line when the pathfinder has no path.
-        if (bgType == BATTLEGROUND_DG)
+        // a node captured it. The Battle for Gilneas has no waypoint paths either: live check 2026-11-24, the waterworks
+        // attackers stayed about 400 yd away in their start areas for 40 minutes. A far objective on these maps is walked
+        // in hops: the first point of the walkable path that is at least HOP_YARDS away, or a point of that length on the
+        // straight line when the pathfinder has no path.
+        if (BgObjectiveTravel::UseHops(bot->GetMapId(), bot->GetDistance(pos.x, pos.y, pos.z)))
         {
-            float const left = bot->GetDistance(pos.x, pos.y, pos.z);
-            if (left > DG_HOP_YARDS)
+            constexpr float hopYards = BgObjectiveTravel::HOP_YARDS;
+            G3D::Vector3 hop(pos.x, pos.y, pos.z);
+            PathGenerator path(bot);
+            path.CalculatePath(pos.x, pos.y, pos.z, false);
+            bool const noPath = sPlayerbotAIConfig->bgIdleLog && (path.GetPathType() & PATHFIND_NOPATH) != 0;
+            Movement::PointsArray const& points = path.GetPath();
+            float walked = 0.0f;
+            bool found = false;
+            for (size_t i = 1; i < points.size() && !found; ++i)
             {
-                G3D::Vector3 hop(pos.x, pos.y, pos.z);
-                PathGenerator path(bot);
-                path.CalculatePath(pos.x, pos.y, pos.z, false);
-                bool const noPath = sPlayerbotAIConfig->bgIdleLog && (path.GetPathType() & PATHFIND_NOPATH) != 0;
-                Movement::PointsArray const& points = path.GetPath();
-                float walked = 0.0f;
-                bool found = false;
-                for (size_t i = 1; i < points.size() && !found; ++i)
+                walked += (points[i] - points[i - 1]).length();
+                if (walked >= hopYards)
                 {
-                    walked += (points[i] - points[i - 1]).length();
-                    if (walked >= DG_HOP_YARDS)
-                    {
-                        hop = points[i];
-                        found = true;
-                    }
+                    hop = points[i];
+                    found = true;
                 }
-                // The first hop is the walkable path's own point. Live check 2026-11-19 (build 25): the Alliance bots left their
-                // base that way, two Horde bots stayed in theirs, where the straight shortcut and the objective's height
-                // (111 against a base at 133) gave no walkable hop. So the other hops are tried in turn on failure: the
-                // straight line at several angles and two lengths, each at the ground height under it.
-                if (found && bot->GetDistance(hop.x, hop.y, hop.z) <= DG_HOP_YARDS * 1.5f && MoveTo(bot->GetMapId(), hop.x, hop.y, hop.z))
-                {
-                    if (sPlayerbotAIConfig->bgIdleLog) { bgIdleResult = "ok"; bgIdleReason = "path hop accepted"; }
-                    return true;
-                }
-                bool validHeight = false;
+            }
+            // The first hop is the walkable path's own point. Live check 2026-11-19 (build 25): the Alliance bots left their
+            // base that way, two Horde bots stayed in theirs, where the straight shortcut and the objective's height
+            // (111 against a base at 133) gave no walkable hop. So the other hops are tried in turn on failure: the
+            // straight line at several angles and two lengths, each at the ground height under it.
+            if (found && bot->GetDistance(hop.x, hop.y, hop.z) <= hopYards * 1.5f && MoveTo(bot->GetMapId(), hop.x, hop.y, hop.z))
+            {
+                if (sPlayerbotAIConfig->bgIdleLog) { bgIdleResult = "ok"; bgIdleReason = "path hop accepted"; }
+                return true;
+            }
+            bool validHeight = false;
 
-                float const heading = std::atan2(pos.y - bot->GetPositionY(), pos.x - bot->GetPositionX());
-                for (float length : { DG_HOP_YARDS, DG_HOP_YARDS * 0.55f })
-                    for (float turnDegrees : { 0.0f, 30.0f, -30.0f, 60.0f, -60.0f, 90.0f, -90.0f })
+            float const heading = std::atan2(pos.y - bot->GetPositionY(), pos.x - bot->GetPositionX());
+            for (float length : { hopYards, hopYards * 0.55f })
+                for (float turnDegrees : { 0.0f, 30.0f, -30.0f, 60.0f, -60.0f, 90.0f, -90.0f })
+                {
+                    float const angle = heading + turnDegrees * float(M_PI) / 180.0f;
+                    float const x = bot->GetPositionX() + std::cos(angle) * length;
+                    float const y = bot->GetPositionY() + std::sin(angle) * length;
+                    float const z = bot->GetMap()->GetHeight(x, y, bot->GetPositionZ() + 5.0f);
+                    if (z > INVALID_HEIGHT)
                     {
-                        float const angle = heading + turnDegrees * float(M_PI) / 180.0f;
-                        float const x = bot->GetPositionX() + std::cos(angle) * length;
-                        float const y = bot->GetPositionY() + std::sin(angle) * length;
-                        float const z = bot->GetMap()->GetHeight(x, y, bot->GetPositionZ() + 5.0f);
-                        if (z > INVALID_HEIGHT)
+                        validHeight = true;
+                        if (MoveTo(bot->GetMapId(), x, y, z))
                         {
-                            validHeight = true;
-                            if (MoveTo(bot->GetMapId(), x, y, z))
-                            {
-                                if (sPlayerbotAIConfig->bgIdleLog) { bgIdleResult = "ok"; bgIdleReason = "alternate hop accepted"; }
-                                return true;
-                            }
+                            if (sPlayerbotAIConfig->bgIdleLog) { bgIdleResult = "ok"; bgIdleReason = "alternate hop accepted"; }
+                            return true;
                         }
                     }
-                if (sPlayerbotAIConfig->bgIdleLog)
-                {
-                    bgIdleResult = validHeight ? "movefailed" : "heightfail";
-                    bgIdleReason = validHeight ? (noPath ? "objective path unavailable; all usable hops rejected" : "all usable hops rejected") : "no alternate ground height";
                 }
-                return false;
+            if (sPlayerbotAIConfig->bgIdleLog)
+            {
+                bgIdleResult = validHeight ? "movefailed" : "heightfail";
+                bgIdleReason = validHeight ? (noPath ? "objective path unavailable; all usable hops rejected" : "all usable hops rejected") : "no alternate ground height";
             }
+            return false;
         }
 
         // dont increase from 1.5 will cause bugs with horde capping AV towers

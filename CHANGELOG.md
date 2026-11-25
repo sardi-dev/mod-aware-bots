@@ -91,6 +91,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
   - Why: Every feature the module has is named in the README, marked Ready or In development.
 
 ### Fixed
+- **Gilneas attackers reach the far base** (2026-11-25)
+  - Summary: In the Battle for Gilneas a far objective is walked in short hops, as in Deepwind Gorge, since the map
+    has no waypoint routes.
+  - Why: In a 40 minute 5v5 match the waterworks attackers never left their start areas; each side kept its near
+    base and the match drew at the timer.
 - **Quest walks keep their progress** (2026-11-25)
   - Summary: A new trip to the same spot starts with a fresh stall clock; progress counts while a movement is still
     running and along the current movement leg (a detour can refresh the clock for at most three minutes); trips over
