@@ -389,7 +389,8 @@ void MistweaverMonkStrategy::InitTriggers(std::vector<TriggerNode*>& triggers)
     triggers.push_back(new TriggerNode(
         "party member medium health",
         NextAction::array(0, new NextAction("renewing mist on party", ACTION_LIGHT_HEAL + 9),
-                          new NextAction("surging mist on party", ACTION_LIGHT_HEAL + 5), nullptr)));
+                          new NextAction("surging mist on party", ACTION_LIGHT_HEAL + 5),
+                          new NextAction("soothing mist on party", ACTION_LIGHT_HEAL + 4), nullptr)));
 
     triggers.push_back(new TriggerNode(
         "party member almost full health",
@@ -461,7 +462,8 @@ void GenericMonkNonCombatStrategy::InitTriggers(std::vector<TriggerNode*>& trigg
                               new NextAction("soothing mist on party", ACTION_MEDIUM_HEAL + 1), nullptr)));
         triggers.push_back(new TriggerNode("party member medium health",
             NextAction::array(0, new NextAction("renewing mist on party", ACTION_LIGHT_HEAL + 9),
-                              new NextAction("surging mist on party", ACTION_LIGHT_HEAL + 5), nullptr)));
+                              new NextAction("surging mist on party", ACTION_LIGHT_HEAL + 5),
+                              new NextAction("soothing mist on party", ACTION_LIGHT_HEAL + 4), nullptr)));
         triggers.push_back(new TriggerNode("party member almost full health",
             NextAction::array(0, new NextAction("renewing mist on party", ACTION_LIGHT_HEAL + 3), nullptr)));
 

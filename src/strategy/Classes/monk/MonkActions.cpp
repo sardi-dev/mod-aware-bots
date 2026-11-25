@@ -13,6 +13,7 @@
 #include "DpsRotationMath.h"
 #include "Group.h"
 #include "HealerGuardrails.h"
+#include "MistweaverHealingPolicy.h"
 #include "HealerTriggers.h"
 #include "Playerbots.h"
 #include "Spell.h"
@@ -38,6 +39,20 @@ bool DetoxYieldsToHeals(Player* bot, AiObjectContext* context)
 {
     return BotGetSpecialization(bot) == Specializations::SPEC_MONK_MISTWEAVER &&
            AI_VALUE2(uint8, "health", "party member to heal") < sPlayerbotAIConfig->lowHealth;
+}
+// Check living group members even when the heal target is temporarily out of sight.
+bool MemberNeedsHealing(Player* bot)
+{
+    if (MistweaverHealingPolicy::HoldMelee(bot->IsAlive(), bot->GetHealthPct(), sPlayerbotAIConfig->lowHealth))
+        return true;
+    if (Group* group = bot->GetGroup())
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+            if (Player* member = ref->GetSource())
+                if (member->IsInWorld() && member->GetMapId() == bot->GetMapId() &&
+                    MistweaverHealingPolicy::HoldMelee(member->IsAlive(), member->GetHealthPct(),
+                                                     sPlayerbotAIConfig->lowHealth))
+                    return true;
+    return false;
 }
 }  // namespace
 
@@ -288,7 +303,8 @@ bool CastNimbleBrewPvpAction::isUseful()
 bool MistweaverMeleeAction::isUseful()
 {
     Unit* target = GetTarget();
-    return MeleeAction::isUseful() &&
+    return !MemberNeedsHealing(bot) && !bot->GetCurrentSpell(CURRENT_CHANNELED_SPELL) &&
+        MeleeAction::isUseful() &&
         HealerGuardrails::MeleeFallbackWorthTrying(target != nullptr,
                                                    target && bot->GetVictim() == target &&
                                                        bot->HasUnitState(UNIT_STATE_MELEE_ATTACKING),
@@ -298,7 +314,8 @@ bool MistweaverMeleeAction::isUseful()
 
 bool CastJabAction::isUseful()
 {
-    return (BotGetSpecialization(bot) != Specializations::SPEC_MONK_WINDWALKER ||
+    return (BotGetSpecialization(bot) != Specializations::SPEC_MONK_MISTWEAVER || !MemberNeedsHealing(bot)) &&
+           (BotGetSpecialization(bot) != Specializations::SPEC_MONK_WINDWALKER ||
             AI_VALUE2(uint8, "chi", "self target") <= 2) && CastMeleeSpellAction::isUseful();
 }
 

@@ -91,6 +91,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
   - Why: Every feature the module has is named in the README, marked Ready or In development.
 
 ### Fixed
+- **Low-level Mistweaver monks heal sooner** (2026-11-25)
+  - Summary: A Mistweaver starts Soothing Mist when a member falls to the medium health threshold (before Surging Mist
+    and Renewing Mist are learned it had nothing in that step), and does not start Jab or its melee fallback while a
+    group member is low or while it channels.
+  - Why: A level 28 Mistweaver healer cast one Soothing Mist in a whole Scarlet Halls fight and the tank died.
 - **Auction routing and role poll safety** (2026-11-25)
   - Summary: A bot with a due auction visit takes a higher need (repair, vendor, trainer, mail) first instead of a
     quest giver, a forced auction visit is tried again only after ten minutes, slow auction work is logged at most once
